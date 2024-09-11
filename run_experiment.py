@@ -25,9 +25,9 @@ p.add_argument('--use_wandb', default=False, action='store_true', help='use wand
 use_wandb = p.parse_known_args()[0].use_wandb
 if use_wandb:
     p.add_argument('--wandb_project', type=str, required=True, help='wandb project')
-    p.add_argument('--wandb_entity', type=str, required=True, help='wandb entity')
-    p.add_argument('--wandb_group', type=str, required=True, help='wandb group')
-    p.add_argument('--wandb_name', type=str, required=True, help='name of wandb run')
+#    p.add_argument('--wandb_entity', type=str, required=True, help='wandb entity')
+#    p.add_argument('--wandb_group', type=str, required=True, help='wandb group')
+#    p.add_argument('--wandb_name', type=str, required=True, help='name of wandb run')
 
 mode = p.parse_known_args()[0].mode
 
@@ -118,9 +118,9 @@ opt = p.parse_args()
 if use_wandb:
     wandb.init(
         project = opt.wandb_project,
-        entity = opt.wandb_entity,
-        group = opt.wandb_group,
-        name = opt.wandb_name,
+        #entity = opt.wandb_entity,
+        #group = opt.wandb_group,
+        #name = opt.wandb_name,
     )
     wandb.config.update(opt)
 
@@ -175,10 +175,19 @@ dataset = dataio.ReachabilityDataset(
 
 model = modules.SingleBVPNet(in_features=dynamics.input_dim, out_features=1, type=orig_opt.model, mode=orig_opt.model_mode,
                              final_layer_factor=1., hidden_features=orig_opt.num_nl, num_hidden_layers=orig_opt.num_hl)
-model.cuda()
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    model.to(device)
+elif torch.backends.mps.is_available():
+    # Do mps conversion
+    device = torch.device("mps")
+    model.to(device)
+else:
+    device = torch.device("cpu")
+    model.to(device)  # should be unnecessary
 
 experiment_class = getattr(experiments, orig_opt.experiment_class)
-experiment = experiment_class(model=model, dataset=dataset, experiment_dir=experiment_dir, use_wandb=use_wandb)
+experiment = experiment_class(model=model, dataset=dataset, experiment_dir=experiment_dir, use_wandb=use_wandb, device=device)
 experiment.init_special(**{argname: getattr(orig_opt, argname) for argname in inspect.signature(experiment_class.init_special).parameters.keys() if argname != 'self'})
 
 if (mode == 'all') or (mode == 'train'):

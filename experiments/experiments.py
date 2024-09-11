@@ -22,11 +22,12 @@ from utils import diff_operators
 from utils.error_evaluators import scenario_optimization, ValueThresholdValidator, MultiValidator, MLPConditionedValidator, target_fraction, MLP, MLPValidator, SliceSampleGenerator
 
 class Experiment(ABC):
-    def __init__(self, model, dataset, experiment_dir, use_wandb):
+    def __init__(self, model, dataset, experiment_dir, use_wandb, device):
         self.model = model
         self.dataset = dataset
         self.experiment_dir = experiment_dir
         self.use_wandb = use_wandb
+        self.device = device
 
     @abstractmethod
     def init_special(self):
@@ -69,7 +70,7 @@ class Experiment(ABC):
                 coords[:, 1 + plot_config['z_axis_idx']] = zs[j]
 
                 with torch.no_grad():
-                    model_results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.cuda())})
+                    model_results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.to(self.device))})
                     values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(), model_results['model_out'].squeeze(dim=-1).detach())
                 
                 ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
@@ -139,8 +140,8 @@ class Experiment(ABC):
                 for step, (model_input, gt) in enumerate(train_dataloader):
                     start_time = time.time()
                 
-                    model_input = {key: value.cuda() for key, value in model_input.items()}
-                    gt = {key: value.cuda() for key, value in gt.items()}
+                    model_input = {key: value.to(self.device) for key, value in model_input.items()}
+                    gt = {key: value.to(self.device) for key, value in gt.items()}
 
                     model_results = self.model({'coords': model_input['model_coords']})
 
@@ -315,9 +316,9 @@ class Experiment(ABC):
                     CSL_optim = torch.optim.Adam(lr=CSL_lr, params=self.model.parameters())
 
                     # initial CSL val loss
-                    CSL_val_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_val_coords.cuda())})
+                    CSL_val_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_val_coords.to(self.device))})
                     CSL_val_preds = self.dataset.dynamics.io_to_value(CSL_val_results['model_in'], CSL_val_results['model_out'].squeeze(dim=-1))
-                    CSL_val_errors = CSL_val_preds - CSL_val_costs.cuda()
+                    CSL_val_errors = CSL_val_preds - CSL_val_costs.to(self.device)
                     CSL_val_loss = torch.mean(torch.pow(CSL_val_errors, 2))
                     CSL_initial_val_loss = CSL_val_loss
                     if self.use_wandb:
@@ -328,13 +329,13 @@ class Experiment(ABC):
 
                     # initial self-supervised learning (SSL) val loss
                     # right now, just took code from dataio.py and the SSL training loop above; TODO: refactor all this for cleaner modular code
-                    CSL_val_states = CSL_val_coords[..., 1:].cuda()
+                    CSL_val_states = CSL_val_coords[..., 1:].to(self.device)
                     CSL_val_dvs = self.dataset.dynamics.io_to_dv(CSL_val_results['model_in'], CSL_val_results['model_out'].squeeze(dim=-1))
                     CSL_val_boundary_values = self.dataset.dynamics.boundary_fn(CSL_val_states)
                     if self.dataset.dynamics.loss_type == 'brat_hjivi':
                         CSL_val_reach_values = self.dataset.dynamics.reach_fn(CSL_val_states)
                         CSL_val_avoid_values = self.dataset.dynamics.avoid_fn(CSL_val_states)
-                    CSL_val_dirichlet_masks = CSL_val_coords[:, 0].cuda() == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
+                    CSL_val_dirichlet_masks = CSL_val_coords[:, 0].to(self.device) == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
                     if self.dataset.dynamics.loss_type == 'brt_hjivi':
                         SSL_val_losses = loss_fn(CSL_val_states, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_dirichlet_masks)
                     elif self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -355,19 +356,19 @@ class Experiment(ABC):
                             CSL_batch_idxs = CSL_idxs[CSL_batch*CSL_batch_size:(CSL_batch+1)*CSL_batch_size]
                             CSL_batch_coords = CSL_coords[CSL_batch_idxs]
 
-                            CSL_batch_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_batch_coords.cuda())})
+                            CSL_batch_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_batch_coords.to(self.device))})
                             CSL_batch_preds = self.dataset.dynamics.io_to_value(CSL_batch_results['model_in'], CSL_batch_results['model_out'].squeeze(dim=-1))
-                            CSL_batch_costs = CSL_costs[CSL_batch_idxs].cuda()
+                            CSL_batch_costs = CSL_costs[CSL_batch_idxs].to(self.device)
                             CSL_batch_errors = CSL_batch_preds - CSL_batch_costs
                             CSL_batch_loss = CSL_loss_weight*torch.mean(torch.pow(CSL_batch_errors, 2))
 
-                            CSL_batch_states = CSL_batch_coords[..., 1:].cuda()
+                            CSL_batch_states = CSL_batch_coords[..., 1:].to(self.device)
                             CSL_batch_dvs = self.dataset.dynamics.io_to_dv(CSL_batch_results['model_in'], CSL_batch_results['model_out'].squeeze(dim=-1))
                             CSL_batch_boundary_values = self.dataset.dynamics.boundary_fn(CSL_batch_states)
                             if self.dataset.dynamics.loss_type == 'brat_hjivi':
                                 CSL_batch_reach_values = self.dataset.dynamics.reach_fn(CSL_batch_states)
                                 CSL_batch_avoid_values = self.dataset.dynamics.avoid_fn(CSL_batch_states)
-                            CSL_batch_dirichlet_masks = CSL_batch_coords[:, 0].cuda() == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
+                            CSL_batch_dirichlet_masks = CSL_batch_coords[:, 0].to(self.device) == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
                             if self.dataset.dynamics.loss_type == 'brt_hjivi':
                                 SSL_batch_losses = loss_fn(CSL_batch_states, CSL_batch_preds, CSL_batch_dvs[..., 0], CSL_batch_dvs[..., 1:], CSL_batch_boundary_values, CSL_batch_dirichlet_masks)
                             elif self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -387,18 +388,18 @@ class Experiment(ABC):
                             CSL_optim.step()
                         
                         # evaluate on CSL_val_dataset
-                        CSL_val_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_val_coords.cuda())})
+                        CSL_val_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_val_coords.to(self.device))})
                         CSL_val_preds = self.dataset.dynamics.io_to_value(CSL_val_results['model_in'], CSL_val_results['model_out'].squeeze(dim=-1))
-                        CSL_val_errors = CSL_val_preds - CSL_val_costs.cuda()
+                        CSL_val_errors = CSL_val_preds - CSL_val_costs.to(self.device)
                         CSL_val_loss = torch.mean(torch.pow(CSL_val_errors, 2))
                     
-                        CSL_val_states = CSL_val_coords[..., 1:].cuda()
+                        CSL_val_states = CSL_val_coords[..., 1:].to(self.device)
                         CSL_val_dvs = self.dataset.dynamics.io_to_dv(CSL_val_results['model_in'], CSL_val_results['model_out'].squeeze(dim=-1))
                         CSL_val_boundary_values = self.dataset.dynamics.boundary_fn(CSL_val_states)
                         if self.dataset.dynamics.loss_type == 'brat_hjivi':
                             CSL_val_reach_values = self.dataset.dynamics.reach_fn(CSL_val_states)
                             CSL_val_avoid_values = self.dataset.dynamics.avoid_fn(CSL_val_states)
-                        CSL_val_dirichlet_masks = CSL_val_coords[:, 0].cuda() == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
+                        CSL_val_dirichlet_masks = CSL_val_coords[:, 0].to(self.device) == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
                         if self.dataset.dynamics.loss_type == 'brt_hjivi':
                             SSL_val_losses = loss_fn(CSL_val_states, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_dirichlet_masks)
                         elif self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -407,26 +408,26 @@ class Experiment(ABC):
                             raise NotImplementedError
                         SSL_val_loss = SSL_val_losses['diff_constraint_hom'].mean() # I assume there is no dirichlet (boundary) loss here, because I do not ever explicitly generate source samples at tMin (i.e. torch.all(CSL_val_dirichlet_masks == False))
                     
-                        CSL_val_tMax_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_val_tMax_coords.cuda())})
+                        CSL_val_tMax_results = self.model({'coords': self.dataset.dynamics.coord_to_input(CSL_val_tMax_coords.to(self.device))})
                         CSL_val_tMax_preds = self.dataset.dynamics.io_to_value(CSL_val_tMax_results['model_in'], CSL_val_tMax_results['model_out'].squeeze(dim=-1))
-                        CSL_val_tMax_errors = CSL_val_tMax_preds - CSL_val_tMax_costs.cuda()
+                        CSL_val_tMax_errors = CSL_val_tMax_preds - CSL_val_tMax_costs.to(self.device)
                         CSL_val_tMax_loss = torch.mean(torch.pow(CSL_val_tMax_errors, 2))
                         
                         # log CSL losses, recovered_safe_set_fracs
                         if self.dataset.dynamics.set_mode == 'reach':
-                            CSL_train_batch_theoretically_recoverable_safe_set_frac = torch.sum(CSL_batch_costs.cuda() < 0) / len(CSL_batch_preds)
-                            CSL_train_batch_recovered_safe_set_frac = torch.sum(CSL_batch_preds < torch.min(CSL_batch_preds[CSL_batch_costs.cuda() > 0])) / len(CSL_batch_preds)
-                            CSL_val_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_costs.cuda() < 0) / len(CSL_val_preds)
-                            CSL_val_recovered_safe_set_frac = torch.sum(CSL_val_preds < torch.min(CSL_val_preds[CSL_val_costs.cuda() > 0])) / len(CSL_val_preds)
-                            CSL_val_tMax_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_tMax_costs.cuda() < 0) / len(CSL_val_tMax_preds)
-                            CSL_val_tMax_recovered_safe_set_frac = torch.sum(CSL_val_tMax_preds < torch.min(CSL_val_tMax_preds[CSL_val_tMax_costs.cuda() > 0])) / len(CSL_val_tMax_preds)
+                            CSL_train_batch_theoretically_recoverable_safe_set_frac = torch.sum(CSL_batch_costs.to(self.device) < 0) / len(CSL_batch_preds)
+                            CSL_train_batch_recovered_safe_set_frac = torch.sum(CSL_batch_preds < torch.min(CSL_batch_preds[CSL_batch_costs.to(self.device) > 0])) / len(CSL_batch_preds)
+                            CSL_val_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_costs.to(self.device) < 0) / len(CSL_val_preds)
+                            CSL_val_recovered_safe_set_frac = torch.sum(CSL_val_preds < torch.min(CSL_val_preds[CSL_val_costs.to(self.device) > 0])) / len(CSL_val_preds)
+                            CSL_val_tMax_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_tMax_costs.to(self.device) < 0) / len(CSL_val_tMax_preds)
+                            CSL_val_tMax_recovered_safe_set_frac = torch.sum(CSL_val_tMax_preds < torch.min(CSL_val_tMax_preds[CSL_val_tMax_costs.to(self.device) > 0])) / len(CSL_val_tMax_preds)
                         elif self.dataset.dynamics.set_mode == 'avoid':
-                            CSL_train_batch_theoretically_recoverable_safe_set_frac = torch.sum(CSL_batch_costs.cuda() > 0) / len(CSL_batch_preds)
-                            CSL_train_batch_recovered_safe_set_frac = torch.sum(CSL_batch_preds > torch.max(CSL_batch_preds[CSL_batch_costs.cuda() < 0])) / len(CSL_batch_preds)
-                            CSL_val_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_costs.cuda() > 0) / len(CSL_val_preds)
-                            CSL_val_recovered_safe_set_frac = torch.sum(CSL_val_preds > torch.max(CSL_val_preds[CSL_val_costs.cuda() < 0])) / len(CSL_val_preds)
-                            CSL_val_tMax_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_tMax_costs.cuda() > 0) / len(CSL_val_tMax_preds)
-                            CSL_val_tMax_recovered_safe_set_frac = torch.sum(CSL_val_tMax_preds > torch.max(CSL_val_tMax_preds[CSL_val_tMax_costs.cuda() < 0])) / len(CSL_val_tMax_preds)
+                            CSL_train_batch_theoretically_recoverable_safe_set_frac = torch.sum(CSL_batch_costs.to(self.device) > 0) / len(CSL_batch_preds)
+                            CSL_train_batch_recovered_safe_set_frac = torch.sum(CSL_batch_preds > torch.max(CSL_batch_preds[CSL_batch_costs.to(self.device) < 0])) / len(CSL_batch_preds)
+                            CSL_val_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_costs.to(self.device) > 0) / len(CSL_val_preds)
+                            CSL_val_recovered_safe_set_frac = torch.sum(CSL_val_preds > torch.max(CSL_val_preds[CSL_val_costs.to(self.device) < 0])) / len(CSL_val_preds)
+                            CSL_val_tMax_theoretically_recoverable_safe_set_frac = torch.sum(CSL_val_tMax_costs.to(self.device) > 0) / len(CSL_val_tMax_preds)
+                            CSL_val_tMax_recovered_safe_set_frac = torch.sum(CSL_val_tMax_preds > torch.max(CSL_val_tMax_preds[CSL_val_tMax_costs.to(self.device) < 0])) / len(CSL_val_tMax_preds)
                         else:
                             raise NotImplementedError
                         if self.use_wandb:
