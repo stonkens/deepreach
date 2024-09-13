@@ -86,8 +86,8 @@ if (mode == 'all') or (mode == 'train'):
     # validation (during training) options
     p.add_argument('--val_x_resolution', type=int, default=200, help='x-axis resolution of validation plot during training')
     p.add_argument('--val_y_resolution', type=int, default=200, help='y-axis resolution of validation plot during training')
-    p.add_argument('--val_z_resolution', type=int, default=5, help='z-axis resolution of validation plot during training')
-    p.add_argument('--val_time_resolution', type=int, default=3, help='time-axis resolution of validation plot during training')
+    p.add_argument('--val_z_resolution', type=int, default=3, help='z-axis resolution of validation plot during training')
+    p.add_argument('--val_time_resolution', type=int, default=5, help='time-axis resolution of validation plot during training')
 
     # loss options
     p.add_argument('--minWith', type=str, required=True, choices=['none', 'zero', 'target'], help='BRS vs BRT computation (typically should be using target for BRT)')
@@ -121,6 +121,7 @@ if use_wandb:
         #entity = opt.wandb_entity,
         #group = opt.wandb_group,
         #name = opt.wandb_name,
+        reinit = True
     )
     wandb.config.update(opt)
 

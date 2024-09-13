@@ -1,3 +1,4 @@
+import matplotlib.gridspec
 import wandb
 import torch
 import os
@@ -51,15 +52,28 @@ class Experiment(ABC):
         state_test_range = self.dataset.dynamics.state_test_range()
         x_min, x_max = state_test_range[plot_config['x_axis_idx']]
         y_min, y_max = state_test_range[plot_config['y_axis_idx']]
-        z_min, z_max = state_test_range[plot_config['z_axis_idx']]
+        if isinstance(plot_config['z_axis_idx'], list):
+            z_min, z_max = list(map(list, zip(*[state_test_range[z_idx] for z_idx in plot_config['z_axis_idx']])))
+            for plot_idx, z_idx in enumerate(plot_config['z_axis_idx']):
+                if z_idx in plot_config['angle_dims'] and math.isclose(z_max[plot_idx] - z_min[plot_idx], 2.*math.pi, rel_tol=1e-2):
+                    z_max[plot_idx] = z_max[plot_idx] - (z_max[plot_idx] - z_min[plot_idx]) / (z_resolution + 1) 
+                else:
+                    z_min[plot_idx], z_max[plot_idx] = state_test_range[z_idx]
+        else:
+            z_min, z_max = state_test_range[plot_config['z_axis_idx']]
 
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
         xs = torch.linspace(x_min, x_max, x_resolution)
         ys = torch.linspace(y_min, y_max, y_resolution)
-        zs = torch.linspace(z_min, z_max, z_resolution)
+        if isinstance(plot_config['z_axis_idx'], list):
+            zs = [torch.linspace(z_min[i], z_max[i], z_resolution) for i in range(len(plot_config['z_axis_idx']))]
+            zs = torch.cartesian_prod(*zs)
+        else:
+            zs = torch.linspace(z_min, z_max, z_resolution)
         xys = torch.cartesian_prod(xs, ys)
         
-        fig = plt.figure(figsize=(5*len(times), 5*len(zs)))
+        fig = plt.figure(figsize=(6*len(zs), 5*len(times)))
+        gs = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
         for i in range(len(times)):
             for j in range(len(zs)):
                 coords = torch.zeros(x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
@@ -67,16 +81,32 @@ class Experiment(ABC):
                 coords[:, 1:] = torch.tensor(plot_config['state_slices'])
                 coords[:, 1 + plot_config['x_axis_idx']] = xys[:, 0]
                 coords[:, 1 + plot_config['y_axis_idx']] = xys[:, 1]
-                coords[:, 1 + plot_config['z_axis_idx']] = zs[j]
+                if isinstance(plot_config['z_axis_idx'], list):
+                    for k, z_idx in enumerate(plot_config['z_axis_idx']):
+                        coords[:, 1 + z_idx] = zs[j][k]
+                else:
+                    coords[:, 1 + plot_config['z_axis_idx']] = zs[j]
 
                 with torch.no_grad():
                     model_results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.to(self.device))})
                     values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(), model_results['model_out'].squeeze(dim=-1).detach())
                 
-                ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
-                ax.set_title('t = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j]))
+                # ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
+                ax = fig.add_subplot(gs[i, j])
+
+                if isinstance(plot_config['z_axis_idx'], list):
+                    ax.set_title('t = %0.2f, %s' % (
+                        times[i],
+                        ', '.join(['%s = %0.2f' % (plot_config['state_labels'][z_idx], zs[j][k].item()) 
+                                   for k, z_idx in enumerate(plot_config['z_axis_idx'])])
+                    ))
+                else:
+                    ax.set_title('t = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j]))
                 s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
-                fig.colorbar(s) 
+                # fig.colorbar(s) 
+            cax = fig.add_subplot(gs[i, -1])
+            fig.colorbar(s, cax=cax, orientation='vertical')#, shrink=0.5, aspect=20)
+        fig.tight_layout()
         fig.savefig(save_path)
         if self.use_wandb:
             wandb.log({
