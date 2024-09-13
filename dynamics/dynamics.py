@@ -344,6 +344,94 @@ class Dubins3D(Dynamics):
             'y_axis_idx': 1,
             'z_axis_idx': 2,
         }
+    
+
+class Dubins3DParameterizedDisturbance(Dynamics):
+    def __init__(self, goalR:float, velocity:float, omega_max:float, angle_alpha_factor:float, set_mode:str, freeze_model: bool,
+                 max_disturbance:float):
+        self.goalR = goalR
+        self.velocity = velocity
+        self.omega_max = omega_max
+        self.angle_alpha_factor = angle_alpha_factor
+        self.freeze_model = freeze_model
+        self.max_disturbance = max_disturbance
+        super().__init__(
+            loss_type='brt_hjivi', set_mode=set_mode,
+            state_dim=4, input_dim=5, control_dim=1, disturbance_dim=1,
+            state_mean=[0, 0, 0, self.max_disturbance/2], 
+            state_var=[1, 1, self.angle_alpha_factor*math.pi, self.max_disturbance/2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact"
+        )
+
+    def state_test_range(self):
+        return [
+            [-1, 1],
+            [-1, 1],
+            [-math.pi, math.pi],
+            [0, self.max_disturbance],  # disturbance term
+        ]
+
+    def equivalent_wrapped_state(self, state):
+        wrapped_state = torch.clone(state)
+        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
+        return wrapped_state
+        
+    # Dubins3D dynamics
+    # \dot x    = v \cos \theta
+    # \dot y    = v \sin \theta
+    # \dot \theta = u
+    # \dot \beta = 0
+    def dsdt(self, state, control, disturbance):
+        if self.freeze_model:
+            raise NotImplementedError
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = self.velocity*torch.cos(state[..., 2]) + state[..., 3] * disturbance[..., 0]
+        dsdt[..., 1] = self.velocity*torch.sin(state[..., 2])
+        dsdt[..., 2] = control[..., 0]
+        dsdt[..., 3] = 0 
+        return dsdt
+    
+    def boundary_fn(self, state):
+        return torch.norm(state[..., :2], dim=-1) - self.goalR
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, dvds):
+        if self.freeze_model:
+            raise NotImplementedError
+        if self.set_mode == 'reach':
+            return self.velocity*(torch.cos(state[..., 2]) * dvds[..., 0] + torch.sin(state[..., 2]) * dvds[..., 1]) - self.omega_max * torch.abs(dvds[..., 2]) + state[..., 3] * torch.abs(dvds[..., 0])
+        elif self.set_mode == 'avoid':
+            return self.velocity*(torch.cos(state[..., 2]) * dvds[..., 0] + torch.sin(state[..., 2]) * dvds[..., 1]) + self.omega_max * torch.abs(dvds[..., 2]) - state[..., 3] * torch.abs(dvds[..., 0])
+
+    def optimal_control(self, state, dvds):
+        if self.set_mode == 'reach':
+            return (-self.omega_max*torch.sign(dvds[..., 2]))[..., None]
+        elif self.set_mode == 'avoid':
+            return (self.omega_max*torch.sign(dvds[..., 2]))[..., None]
+
+    def optimal_disturbance(self, state, dvds):
+        if self.set_mode == 'reach':
+            return (1 * state[..., 3] * torch.sign(dvds[..., 0]))[..., None]
+        elif self.set_mode == 'avoid':
+            return (-1 * state[..., 3] * torch.sign(dvds[..., 0]))[..., None]
+    
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['x', 'y', r'$\theta$', r'$\beta$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+            'angle_dims': [2],
+        }
 
 class Dubins4D(Dynamics):
     def __init__(self, bound_mode:str):
