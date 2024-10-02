@@ -24,6 +24,7 @@ class Dynamics(ABC):
         self.disturbance_dim = disturbance_dim
         self.state_mean = torch.tensor(state_mean) 
         self.state_var = torch.tensor(state_var)
+        self.state_bounds = torch.stack([self.state_mean - self.state_var, self.state_mean + self.state_var], dim=-1)
         self.value_mean = value_mean
         self.value_var = value_var
         self.value_normto = value_normto
@@ -1359,3 +1360,11 @@ class MultiVehicleCollision(Dynamics):
             'y_axis_idx': 1,
             'z_axis_idx': 6,
         }
+
+
+
+if __name__ == "__main__":
+    dynamics = Quad2DAttitude(9.81, 0.75, 5.0, 15.0, 0.0, 0.0, 'avoid')
+    sample = torch.rand((65000, 4)) * 2 - 1
+    sample_pts = dynamics.input_to_coord(sample)
+    
