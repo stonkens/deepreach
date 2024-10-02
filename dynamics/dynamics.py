@@ -513,6 +513,104 @@ class Dubins4D(Dynamics):
     def plot_config(self):
         raise NotImplementedError
 
+
+class Quad2DAttitude(Dynamics):
+    def __init__(self, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, max_pos_dist: float = 0.0, 
+                 max_vel_dist: float = 0.0, set_mode: str='avoid'):
+        self.gravity = gravity
+        self.max_angle = max_angle
+        self.min_thrust = min_thrust
+        self.max_thrust = max_thrust
+        self.max_pos_dist = max_pos_dist
+        self.max_vel_dist = max_vel_dist
+        from utils import boundary_functions
+        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.5, 0.0, -3.0, -3.0]), 
+                                                     torch.Tensor([4.5, 2.5, 3.0, 3.0]))
+        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([-1.0, 1.5]))
+        self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+        super().__init__(
+            loss_type='brt_hjivi', set_mode=set_mode,
+            state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
+            state_mean=[0., 1.3, 0, 0],
+            state_var=[5., 1.5, 2, 2],
+            value_mean=0.2,
+            value_var=0.5,
+            value_normto=0.02,
+            deepreach_model="exact"
+        )
+
+    def state_test_range(self):
+        return [
+            [-5, 5], 
+            [-0.2, 2.8],
+            [-1.5, 1.5],
+            [-1.5, 1.5]
+        ]
+    
+    def equivalent_wrapped_state(self, state):
+        wrapped_state = torch.clone(state)
+        return wrapped_state
+    
+    def dsdt(self, state, control, disturbance):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2]
+        dsdt[..., 1] = state[..., 3]
+        dsdt[..., 2] = self.gravity * control[..., 0]
+        dsdt[..., 3] = control[..., 1] - self.gravity
+        return dsdt
+    
+    def boundary_fn(self, state):
+        return self.sdf(state)
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+
+    def hamiltonian(self, state, dvds):
+        optimal_control = self.optimal_control(state, dvds)
+        optimal_disturbance = self.optimal_disturbance(state, dvds)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance)
+        return torch.sum(flow*dvds, dim=-1)
+    
+    def optimal_control(self, state, dvds):
+        if self.set_mode == "avoid":
+            a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
+        elif self.set_mode == "reach":
+            a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((a1[..., None], a2[..., None]), dim=-1)
+
+    def optimal_disturbance(self, state, dvds):
+        if self.set_mode == "avoid":
+            d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
+        elif self.set_mode == "reach":
+            d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
+    
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['y', 'z', r'$v_y$', r'$v_z$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+
+
 class NarrowPassage(Dynamics):
     def __init__(self, avoid_fn_weight:float, avoid_only:bool):
         self.L = 2.0
