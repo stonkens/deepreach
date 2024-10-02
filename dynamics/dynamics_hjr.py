@@ -21,7 +21,7 @@ class Quad2DAttitude(hj.dynamics.ControlAndDisturbanceAffineDynamics):
         return jnp.array([
             [0., 0.],
             [0., 0.],
-            [1., 0.],
+            [self.gravity, 0.],
             [0., 1.],
         ])
     
