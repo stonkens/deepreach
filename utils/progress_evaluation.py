@@ -36,7 +36,7 @@ class GroundTruthHJSolution:
     def __call__(self, state, time):
         # Find nearest time
         def single_compute(state, time):
-            time_idx = jnp.argmin(jnp.abs(self.times - time))
+            time_idx = jnp.argmin(jnp.abs(jnp.abs(self.times) - jnp.abs(time)))
             return self.grid.interpolate(self.value_functions[time_idx], state)
         vectorized_compute = jax.vmap(single_compute, in_axes=(0, 0))
         return vectorized_compute(state, time)
@@ -54,7 +54,7 @@ class GroundTruthHJSolution:
         return self.times(self.get_closest_time_idx(time))
     
     def get_closest_time_idx(self, time):
-        return jnp.argmin(jnp.abs(self.times - time))
+        return jnp.argmin(jnp.abs(jnp.abs(self.times) - jnp.abs(time)))
     
     def get_values_table(self):
         return self.value_functions.reshape(len(self.times), -1), self.times, self.grid.states.reshape(-1, self.grid.ndim)
