@@ -21,6 +21,9 @@ from datetime import datetime
 from sklearn import svm 
 from utils import diff_operators
 from utils.error_evaluators import scenario_optimization, ValueThresholdValidator, MultiValidator, MLPConditionedValidator, target_fraction, MLP, MLPValidator, SliceSampleGenerator
+from utils.progress_evaluation import CompareWithAlternative, GroundTruthHJSolution
+from dynamics import dynamics_hjr
+import inspect
 
 class Experiment(ABC):
     def __init__(self, model, dataset, experiment_dir, use_wandb, device):
@@ -29,6 +32,18 @@ class Experiment(ABC):
         self.experiment_dir = experiment_dir
         self.use_wandb = use_wandb
         self.device = device
+        self.validation_metrics = lambda *args, **kwargs: {} 
+        if self.dataset.dynamics.state_dim <= 5:
+            # Get the name of the dynamics class
+            dynamics_class_name = self.dataset.dynamics.__class__.__name__
+            dynamics_class = getattr(dynamics_hjr, dynamics_class_name)
+            dynamics_params = inspect.signature(dynamics_class).parameters
+            dynamics_args = {argname: getattr(self.dataset.dynamics, argname) for argname in dynamics_params 
+                             if hasattr(self.dataset.dynamics, argname)}
+            hj_dyn = dynamics_class(self.dataset.dynamics, **dynamics_args)
+            gt = GroundTruthHJSolution(hj_dyn)
+            self.validation_metrics = CompareWithAlternative(self.dataset.dynamics, gt, [], 
+                                                             gt.grid.states.reshape(-1, gt.grid.ndim), gt.times)
 
     @abstractmethod
     def init_special(self):
@@ -55,7 +70,9 @@ class Experiment(ABC):
         if isinstance(plot_config['z_axis_idx'], list):
             z_min, z_max = list(map(list, zip(*[state_test_range[z_idx] for z_idx in plot_config['z_axis_idx']])))
             for plot_idx, z_idx in enumerate(plot_config['z_axis_idx']):
-                if z_idx in plot_config['angle_dims'] and math.isclose(z_max[plot_idx] - z_min[plot_idx], 2.*math.pi, rel_tol=1e-2):
+                if (hasattr(plot_config, 'angle_dims') and 
+                    z_idx in plot_config['angle_dims'] and
+                    math.isclose(z_max[plot_idx] - z_min[plot_idx], 2.*math.pi, rel_tol=1e-2)):
                     z_max[plot_idx] = z_max[plot_idx] - (z_max[plot_idx] - z_min[plot_idx]) / (z_resolution + 1) 
                 else:
                     z_min[plot_idx], z_max[plot_idx] = state_test_range[z_idx]
@@ -74,6 +91,9 @@ class Experiment(ABC):
         
         fig = plt.figure(figsize=(6*len(zs), 5*len(times)))
         gs = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
+        if hasattr(self.validation_metrics, 'include_plot'):
+            fig2 = plt.figure(figsize=(6*len(zs), 5*len(times)))
+            gs2 = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
         for i in range(len(times)):
             for j in range(len(zs)):
                 coords = torch.zeros(x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
@@ -89,30 +109,44 @@ class Experiment(ABC):
 
                 with torch.no_grad():
                     model_results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.to(self.device))})
+                    if hasattr(self.validation_metrics, 'include_plot'):
+                        values_validation = self.validation_metrics.get_comparison_plot_data(coords.to(self.device))
                     values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(), model_results['model_out'].squeeze(dim=-1).detach())
                 
                 # ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
                 ax = fig.add_subplot(gs[i, j])
 
                 if isinstance(plot_config['z_axis_idx'], list):
-                    ax.set_title('t = %0.2f, %s' % (
+                    ax_title = 't = %0.2f, %s' % (
                         times[i],
                         ', '.join(['%s = %0.2f' % (plot_config['state_labels'][z_idx], zs[j][k].item()) 
                                    for k, z_idx in enumerate(plot_config['z_axis_idx'])])
-                    ))
+                    )
                 else:
-                    ax.set_title('t = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j]))
+                    ax_title = 't = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j])
                 s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
+                ax.set_title(ax_title)
+                if hasattr(self.validation_metrics, 'include_plot'):
+                    ax2 = fig2.add_subplot(gs2[i, j])
+                    ax2.imshow(1*(values_validation.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
+                    ax2.set_title(ax_title)
                 # fig.colorbar(s) 
             cax = fig.add_subplot(gs[i, -1])
             fig.colorbar(s, cax=cax, orientation='vertical')#, shrink=0.5, aspect=20)
+            if hasattr(self.validation_metrics, 'include_plot'):
+                cax2 = fig2.add_subplot(gs2[i, -1])
+                fig2.colorbar(s, cax=cax2, orientation='vertical')
         fig.tight_layout()
         fig.savefig(save_path)
+
+        # Add possible progress evaluation metrics here
+        wandb_log = self.validation_metrics(self.model, add_temporal_data=True)
+        wandb_log['step'] = epoch
+        wandb_log['val_plot'] = wandb.Image(fig)
+        if hasattr(self.validation_metrics, 'include_plot'):
+            wandb_log['val_plot_gt'] = wandb.Image(fig2)
         if self.use_wandb:
-            wandb.log({
-                'step': epoch,
-                'val_plot': wandb.Image(fig),
-            })
+            wandb.log(wandb_log)
         plt.close()
 
         if was_training:
