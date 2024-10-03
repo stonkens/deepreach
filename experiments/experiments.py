@@ -112,7 +112,9 @@ class Experiment(ABC):
                     if hasattr(self.validation_metrics, 'include_plot'):
                         values_validation = self.validation_metrics.get_comparison_plot_data(coords.to(self.device))
                     values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(), model_results['model_out'].squeeze(dim=-1).detach())
-                
+
+                    sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(self.device))
+
                 # ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
                 ax = fig.add_subplot(gs[i, j])
 
@@ -125,10 +127,15 @@ class Experiment(ABC):
                 else:
                     ax_title = 't = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j])
                 s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
+                # Go from xs to (-1, 1) and ys to (-1, 1)
+                xs_plot = np.linspace(-1, 1, x_resolution)
+                ys_plot = np.linspace(-1, 1, y_resolution)
+                ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
                 ax.set_title(ax_title)
                 if hasattr(self.validation_metrics, 'include_plot'):
                     ax2 = fig2.add_subplot(gs2[i, j])
                     ax2.imshow(1*(values_validation.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
+                    ax2.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
                     ax2.set_title(ax_title)
                 # fig.colorbar(s) 
             cax = fig.add_subplot(gs[i, -1])
