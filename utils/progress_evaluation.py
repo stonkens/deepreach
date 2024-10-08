@@ -34,6 +34,7 @@ class GroundTruthHJSolution:
         self.value_functions = hj.solve(solver_settings, self.hj_dynamics, self.grid, self.times, 
                                         sdf_values, progress_bar=True)
         self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
+        self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0, 0, 0, 0))
         
     def __call__(self, state, time):
         # Find nearest time
@@ -42,6 +43,21 @@ class GroundTruthHJSolution:
             return self.grid.interpolate(self.value_functions[time_idx], state)
         vectorized_compute = jax.vmap(single_compute, in_axes=(0, 0))
         return vectorized_compute(state, time)
+    
+    def get_values_gradient(self, states, ts):
+        unique_times = jnp.unique(ts)
+        alt_values = jnp.zeros((states.shape[0], states.shape[1]))
+        if states.shape[0] == 1:
+            time_idx = self.get_closest_time_idx(ts)
+            grad_values = self.grid.grad_values(self.value_functions[time_idx], upwind_scheme=upwind_first.WENO3)
+            alt_values = self.interpolation_f(grad_values, states)
+        else:
+            for timestep in unique_times:
+                mask = (ts == timestep).squeeze()
+                time_idx = self.get_closest_time_idx(timestep)
+                grad_values = self.grid.grad_values(self.value_functions[time_idx], upwind_scheme=upwind_first.WENO3)
+                alt_values = alt_values.at[mask].set(self.interpolation_f(grad_values, states[mask]))
+        return alt_values
     
     def get_values(self, states, ts):
         unique_times = jnp.unique(ts)
@@ -168,10 +184,149 @@ class CompareWithAlternative:
         values = self.alt_method.get_values(states, ts)
         return j2t(values).to(coordinates.device)
 
-if __name__ == "__main__":
-    import hj_reachability as hj
-    grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(hj.sets.Box([0., 0.], [1., 1.]), (3, 3))
-    alt_method = None
-    times = torch.from_numpy(np.linspace(0, 1, 5).astype(np.float32))
-    eval_states = torch.from_numpy(np.array(grid.states))
-    comparison = CompareWithAlternative(alt_method, [], eval_states, times)
+class EmpiricalPerformance:
+    def __init__(self, dynamics, dt, sample_generator = None, sample_validator = None, violation_validator = None,
+                 batch_size=100000, samples_per_round_multiplier=5.0, fixed_vf=True, device='cuda'):
+        self.dynamics = dynamics
+        self.dt = dt  # dt in forward simulation
+        self.sample_generator = sample_generator
+        if self.sample_generator is None:
+            # Default: Any state can be chosen as a sample
+            self.sample_generator = SliceSampleGenerator(dynamics, [None]*dynamics.state_dim)
+        self.sample_validator = sample_validator
+        if self.sample_validator is None:
+            # Default: Valid x0s all have positive values
+            self.sample_validator = ValueThresholdValidator(v_min=0.0, v_max=float('inf'))
+        self.violation_validator = violation_validator
+        if self.violation_validator is None:
+            # Default: Violation states are states where the value is negative
+            self.violation_validator = ValueThresholdValidator(v_min=float('-inf'), v_max=0.0)
+        self.batch_size = batch_size
+        self.samples_per_round_multiplier = samples_per_round_multiplier
+        self.fixed_vf = fixed_vf  # If fixed_vf is True, we keep the value function fixed (as if it converged)
+        self.device = device
+
+    def get_values(self, coordinates, **kwargs):
+        model = kwargs['model']
+        with torch.no_grad():
+            # coordinates[:, 0] = torch.min(coordinates[:, 0], torch.ones_like(coordinates[:, 0]))
+            candidate_model_results = model({'coords': self.dynamics.coord_to_input(coordinates.to(self.device))})
+            candidate_values = self.dynamics.io_to_value(candidate_model_results['model_in'], 
+                                                         candidate_model_results['model_out'].squeeze(dim=-1))
+        return candidate_values
+    
+    def get_optimal_trajectory(self, curr_coords, **kwargs):
+        model = kwargs['model']
+        # curr_coords[:, 0] = torch.min(curr_coords[:, 0], torch.ones_like(curr_coords[:, 0]))
+        rollout_results = model({'coords': self.dynamics.coord_to_input(curr_coords)})
+        dvs = self.dynamics.io_to_dv(rollout_results['model_in'], rollout_results['model_out'].squeeze(dim=-1))
+
+        controls = self.dynamics.optimal_control(curr_coords[:, 1:], dvs[..., 1:])
+        disturbances = self.dynamics.optimal_disturbance(curr_coords[:, 1:], dvs[..., 1:])
+
+        next_states = curr_coords[:, 1:] + self.dt * self.dynamics.dsdt(curr_coords[:, 1:], controls, disturbances)
+        return self.dynamics.equivalent_wrapped_state(next_states), controls, disturbances
+    
+    def __call__(self, model, vf_times, rollout_times=None):
+        if isinstance(vf_times, float):
+            # TODO: Maybe replace with explicit call in run_experiment to distinguish cases
+            # Here, we only evaluate the model with rollouts from the maximum time
+            times_hi = vf_times
+            times_lo = vf_times
+        else:
+            # We take different times for which we start evaluating
+            times_lo, times_hi = vf_times
+        
+        num_samples = int(self.samples_per_round_multiplier * self.batch_size)
+        sample_times = torch.zeros(self.batch_size, )
+        sample_states = torch.zeros(self.batch_size, self.dynamics.state_dim)
+        sample_values = torch.zeros(self.batch_size, )
+
+        num_scenarios = 0
+        while num_scenarios < self.batch_size:
+            candidate_sample_times = torch.ceil((torch.rand((num_samples)) * (times_hi - times_lo) + times_lo) / self.dt) * self.dt
+            candidate_sample_states = self.dynamics.equivalent_wrapped_state(self.sample_generator.sample(num_samples))
+            candidate_sample_coords = torch.cat((candidate_sample_times.unsqueeze(-1), candidate_sample_states), dim=-1)
+
+            candidate_values = self.get_values(candidate_sample_coords, model=model)
+
+            valid_candidate_idis = torch.where(self.sample_validator.validate(candidate_sample_coords, candidate_values))[0].detach().cpu()
+            valid_candidate_idis = valid_candidate_idis[:self.batch_size - num_scenarios]  # Remove any excess
+            num_valid_idis = len(valid_candidate_idis)
+            sample_times[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_times[valid_candidate_idis]
+            sample_states[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_states[valid_candidate_idis]
+            sample_values[num_scenarios:num_scenarios + num_valid_idis] = candidate_values[valid_candidate_idis]
+            num_scenarios += num_valid_idis
+
+        if self.fixed_vf and (rollout_times is not None):
+            if isinstance(rollout_times, float):
+                traj_times_hi = rollout_times
+                traj_times_lo = rollout_times
+            else:
+                traj_times_lo, traj_times_hi = rollout_times
+            # sample the start times
+            traj_sample_times = torch.ceil((torch.rand((self.batch_size)) * (traj_times_hi - traj_times_lo) + traj_times_lo) / self.dt) * self.dt
+        else: 
+            assert rollout_times is None, "Rollout times are not supported when the value function is not fixed"
+            traj_times_lo = times_hi
+            traj_times_hi = times_hi
+            traj_sample_times = sample_times
+
+
+        state_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1), self.dynamics.state_dim)
+        controls_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt), self.dynamics.control_dim)
+        state_trajs[:, 0] = sample_states
+
+        for k in range(int((traj_times_hi) / self.dt)):
+            traj_time = traj_times_hi - k * self.dt
+            if self.fixed_vf:
+                model_input_time = sample_times.clone().unsqueeze(-1)
+            else:
+                model_input_time = torch.zeros(self.batch_size, 1).fill_(traj_time)
+
+            curr_coords = torch.cat((model_input_time, state_trajs[:, k]), dim=-1).to(self.device)
+            next_states, controls, dists = self.get_optimal_trajectory(curr_coords, model=model)
+            
+            not_started_times = traj_sample_times < (traj_time - self.dt / 2)
+            started_times = ~not_started_times
+            state_trajs[not_started_times, k + 1] = state_trajs[not_started_times, k]
+            state_trajs[started_times, k + 1] = next_states[started_times].to('cpu')
+            controls_trajs[started_times, k] = controls[started_times].to('cpu')
+        batch_scenario_costs = self.dynamics.cost_fn(state_trajs)
+        batch_value_errors = batch_scenario_costs - sample_values
+        batch_value_mse = torch.mean(batch_value_errors ** 2)
+        false_safe_trajectories = torch.logical_and(batch_scenario_costs < 0, sample_values >= 0)
+        log_dict = {
+            'value_mse': batch_value_mse.item(),
+            'false_safe_trajectories': torch.sum(false_safe_trajectories).item() / self.batch_size,
+            'trajectories': state_trajs,
+            'values': sample_values,
+            'controls_trajs': controls_trajs,
+            'batch_values': batch_scenario_costs
+        }
+        return log_dict
+
+
+class EmpiricalPerformanceHJR(EmpiricalPerformance):
+    def __init__(self, dynamics, dt, sample_generator = None, sample_validator = None, violation_validator = None,
+                 batch_size=100000, samples_per_round_multiplier=5.0, fixed_vf=True, **kwargs):
+        self.hj_dynamics = dynamics
+        dynamics = self.hj_dynamics.torch_dynamics
+        super().__init__(dynamics, dt, sample_generator, sample_validator, violation_validator, batch_size, samples_per_round_multiplier, fixed_vf)
+        self.ground_truth_hj_solution = kwargs['ground_truth_hj_solution']
+
+    def get_values(self, coordinates, **kwargs):
+        coordinates = t2j(coordinates)
+        return j2t(self.ground_truth_hj_solution.get_values(coordinates[:, 1:], coordinates[:, 0]))
+
+    def get_optimal_trajectory(self, curr_coords, **kwargs):
+        curr_coords = t2j(curr_coords)
+        # Get gradient values
+        grad_values = self.ground_truth_hj_solution.get_values_gradient(curr_coords[:, 1:], curr_coords[:, 0])
+        # Get optimal control and disturbance
+        control, disturbance = self.hj_dynamics.optimal_control_and_disturbance(curr_coords[:, 1:], curr_coords[:, 0], grad_values)
+        # Forward simulate
+        next_states = curr_coords[:,1:] + self.dt * self.ground_truth_hj_solution.dsdt_f(curr_coords[:, 1:], control, disturbance, curr_coords[:, 0])
+        # if self.hj_dynamics.periodic_dims is not None:
+        #     raise NotImplementedError("Periodic dimensions not yet supported")
+        return j2t(next_states), j2t(control), j2t(disturbance)

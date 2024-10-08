@@ -21,7 +21,7 @@ from datetime import datetime
 from sklearn import svm 
 from utils import diff_operators
 from utils.error_evaluators import scenario_optimization, ValueThresholdValidator, MultiValidator, MLPConditionedValidator, target_fraction, MLP, MLPValidator, SliceSampleGenerator
-from utils.progress_evaluation import CompareWithAlternative, GroundTruthHJSolution
+from utils.progress_evaluation import CompareWithAlternative, GroundTruthHJSolution, EmpiricalPerformance
 from dynamics import dynamics_hjr
 import inspect
 
@@ -33,6 +33,7 @@ class Experiment(ABC):
         self.use_wandb = use_wandb
         self.device = device
         self.validation_metrics = lambda *args, **kwargs: {} 
+        self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.005, device=self.device)
         if self.dataset.dynamics.state_dim <= 5:
             # Get the name of the dynamics class
             dynamics_class_name = self.dataset.dynamics.__class__.__name__
@@ -148,6 +149,11 @@ class Experiment(ABC):
 
         # Add possible progress evaluation metrics here
         wandb_log = self.validation_metrics(self.model, add_temporal_data=True)
+        curr_t = self.dataset.tMin + (self.dataset.tMax - self.dataset.tMin) * self.dataset.counter / self.dataset.counter_end
+        added_log = self.emperical_cost_validation_metric(self.model, vf_times=[max(0, curr_t - 0.1), curr_t])
+        for key, value in added_log.items():
+            if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                wandb_log[key] = value
         wandb_log['step'] = epoch
         wandb_log['val_plot'] = wandb.Image(fig)
         if hasattr(self.validation_metrics, 'include_plot'):
