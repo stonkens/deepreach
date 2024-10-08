@@ -10,11 +10,13 @@ class GroundTruthHJSolution:
         import hj_reachability as hj
         import jax.numpy as jnp
         self.hj_dynamics = hj_dynamics
-        state_test_range = jnp.array(self.hj_dynamics.torch_dynamics.state_bounds.detach().cpu().numpy())
-
-        state_domain = hj.sets.Box(lo=state_test_range[:, 0], hi=state_test_range[:, 1])
+        state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy())
+        state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy())
+        state_hi = state_mean + state_var
+        state_lo = state_mean - state_var
+        state_domain = hj.sets.Box(lo=state_lo, hi=state_hi)
         
-        grid_resolution = tuple([51]) * state_test_range.shape[0]  
+        grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
         self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution)
         from utils import boundary_functions
         space_boundary = boundary_functions.BoundaryJAX([0, 1, 2, 3], jnp.array([-4.5, 0.0, -3.0, -3.0]), 
