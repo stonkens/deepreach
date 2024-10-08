@@ -51,7 +51,7 @@ class Experiment(ABC):
 
     def _load_checkpoint(self, epoch):
         if epoch == -1:
-            model_path = os.path.join(self.experiment_dir, 'training', 'checkpoints', 'model_final.pth')
+            model_path = os.path.join(self.experiment_dir, 'training', 'checkpoints', 'model_current.pth')
             self.model.load_state_dict(torch.load(model_path))
         else:
             model_path = os.path.join(self.experiment_dir, 'training', 'checkpoints', 'model_epoch_%04d.pth' % epoch)
@@ -209,6 +209,8 @@ class Experiment(ABC):
                 
                 # self-supervised learning
                 for step, (model_input, gt) in enumerate(train_dataloader):
+                    # model_input contains the states.
+                    # gt contains boundary values and dirchelet masks (optionally reach and avoid values)
                     start_time = time.time()
                 
                     model_input = {key: value.to(self.device) for key, value in model_input.items()}
