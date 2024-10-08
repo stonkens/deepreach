@@ -228,6 +228,14 @@ class EmpiricalPerformance:
         return self.dynamics.equivalent_wrapped_state(next_states), controls, disturbances
     
     def __call__(self, model, vf_times, rollout_times=None):
+        """
+            model: torch.nn.Module to use for finding valid sample points + optionally performing rollouts (if NN)
+            vf_times: float or tuple of floats, timepoints from which we start evaluating the value function
+                - If vf_fixed is True, this vf is used for all times in the rollout (considers converged vf)
+                - If vf_fixed is False, this vf changes its t with the rollout itself (surfing the time-varying vf)
+            rollout_times: float or tuple of floats, length of time for which we perform rollouts
+                - Can only be set if vf_fixed is True
+        """
         if isinstance(vf_times, float):
             # TODO: Maybe replace with explicit call in run_experiment to distinguish cases
             # Here, we only evaluate the model with rollouts from the maximum time
