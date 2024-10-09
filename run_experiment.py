@@ -31,6 +31,21 @@ if use_wandb:
 
 mode = p.parse_known_args()[0].mode
 
+# load dynamics_class choices dynamically from dynamics module
+dynamics_classes_dict = {name: clss for name, clss in inspect.getmembers(dynamics, inspect.isclass) if clss.__bases__[0] == dynamics.Dynamics}
+p.add_argument('--dynamics_class', type=str, required=True, choices=dynamics_classes_dict.keys(), help='Dynamics class to use.')
+# load special dynamics_class arguments dynamically from chosen dynamics class
+dynamics_class = dynamics_classes_dict[p.parse_known_args()[0].dynamics_class]
+dynamics_params = {name: param for name, param in inspect.signature(dynamics_class).parameters.items() if name != 'self'}
+for param in dynamics_params.keys():
+    if dynamics_params[param].annotation is bool:
+        p.add_argument('--' + param, type=dynamics_params[param].annotation, default=False, help='special dynamics_class argument')
+    else:
+        p.add_argument('--' + param, type=dynamics_params[param].annotation, required=True, help='special dynamics_class argument')
+
+# loss options
+p.add_argument('--minWith', type=str, required=True, choices=['none', 'zero', 'target'], help='BRS vs BRT computation (typically should be using target for BRT)')
+
 if (mode == 'all') or (mode == 'train'):
     p.add_argument('--seed', type=int, default=0, required=False, help='Seed for the experiment.')
 
@@ -89,20 +104,6 @@ if (mode == 'all') or (mode == 'train'):
     p.add_argument('--val_z_resolution', type=int, default=3, help='z-axis resolution of validation plot during training')
     p.add_argument('--val_time_resolution', type=int, default=5, help='time-axis resolution of validation plot during training')
 
-    # loss options
-    p.add_argument('--minWith', type=str, required=True, choices=['none', 'zero', 'target'], help='BRS vs BRT computation (typically should be using target for BRT)')
-
-    # load dynamics_class choices dynamically from dynamics module
-    dynamics_classes_dict = {name: clss for name, clss in inspect.getmembers(dynamics, inspect.isclass) if clss.__bases__[0] == dynamics.Dynamics}
-    p.add_argument('--dynamics_class', type=str, required=True, choices=dynamics_classes_dict.keys(), help='Dynamics class to use.')
-    # load special dynamics_class arguments dynamically from chosen dynamics class
-    dynamics_class = dynamics_classes_dict[p.parse_known_args()[0].dynamics_class]
-    dynamics_params = {name: param for name, param in inspect.signature(dynamics_class).parameters.items() if name != 'self'}
-    for param in dynamics_params.keys():
-        if dynamics_params[param].annotation is bool:
-            p.add_argument('--' + param, type=dynamics_params[param].annotation, default=False, help='special dynamics_class argument')
-        else:
-            p.add_argument('--' + param, type=dynamics_params[param].annotation, required=True, help='special dynamics_class argument')
 
 if (mode == 'all') or (mode == 'test'):
     p.add_argument('--dt', type=float, default=0.0025, help='The dt used in testing simulations')
