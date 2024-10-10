@@ -598,21 +598,49 @@ class Experiment(ABC):
                 raise NotImplementedError
 
         else:
+            import matplotlib.pyplot as plt
             print('running specific-checkpoint testing')
             self._load_checkpoint(checkpoint_toload)
             # Get max time of checkpoint from the name (model_epoch_%04d.pth)
             checkpoint_max_time = checkpoint_toload / (self.dataset.tMax - self.dataset.tMin) / self.dataset.counter_end
-            self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.001, device=self.device, batch_size=100)
             curr_t = max(0, checkpoint_max_time)
+            if self.dataset.dynamics.state_dim <= 5:
+            # Get the name of the dynamics class
+                self.cost_validation = EmpiricalPerformance(self.dataset.dynamics, 0.002, device=self.device,
+                                                            batch_size=100, fixed_samples=True, 
+                                                            fixed_samples_validator=self.validation_metrics.alt_method)
+            
+            
+                results = self.cost_validation(self.model, vf_times=curr_t-0.1, rollout_times=1.0)
+                print("Ground truth comparison")
+                for key, value in results.items():
+                    if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                        print('%s: %f' % (key, value))
+                
+                plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
+                plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
+                ground_truth = self.validation_metrics.alt_method
+                plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
+                plt.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
+                plt.xlim([-5, 5])
+                plt.ylim([-0.2, 2.8])
+                plt.savefig(os.path.join(testing_dir, 'trajectory_guaranteed_safe.png'))
+
+                fig, ax = plt.subplots()
+                ax.plot(results['values_over_trajs'][::10].T)
+                ax.set_ylim([-1, 1])
+                fig.savefig(os.path.join(testing_dir, 'values_over_trajs.png'))
+
+            self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.001, device=self.device, batch_size=100)
             results = self.emperical_cost_validation_metric(self.model, vf_times=[max(0, curr_t - 0.1), curr_t], rollout_times=1.0)
             for key, value in results.items():
                 if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
                     print('%s: %f' % (key, value))
-            import matplotlib.pyplot as plt
+            
             plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
             plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
             ground_truth = self.validation_metrics.alt_method
-            plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[2][:,:,25,25].T)
+            plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
             plt.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
             plt.xlim([-5, 5])
             plt.ylim([-0.2, 2.8])
