@@ -45,6 +45,9 @@ class Experiment(ABC):
             gt = GroundTruthHJSolution(hj_dyn)
             self.validation_metrics = CompareWithAlternative(self.dataset.dynamics, gt, [], 
                                                              gt.grid.states.reshape(-1, gt.grid.ndim), gt.times)
+            self.gt_cost_validation = EmpiricalPerformance(self.dataset.dynamics, 0.002, device=self.device, 
+                                                           batch_size=100, fixed_samples=True,
+                                                           fixed_samples_validator=gt)
 
     @abstractmethod
     def init_special(self):
@@ -154,6 +157,31 @@ class Experiment(ABC):
         for key, value in added_log.items():
             if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
                 wandb_log[key] = value
+        if hasattr(self, 'gt_cost_validation'):
+            another_log = self.gt_cost_validation(self.model, vf_times=max(0.0, curr_t - 0.1), rollout_times=self.dataset.tMax)
+            for key, value in another_log.items():
+                if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                    mod_key = 'gt_' + key
+                    wandb_log[mod_key] = value
+            fig3, ax = plt.subplots()
+            ax.plot(another_log['trajectories'][:, :, 0].T, another_log['trajectories'][:, :, 1].T)
+            ax.plot(another_log['trajectories'][:,:1, 0].T, another_log['trajectories'][:,:1, 1].T, '*')
+            ground_truth = self.validation_metrics.alt_method
+            ax.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
+            ax.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
+            ax.set_xlim([ground_truth.grid.coordinate_vectors[0][0], ground_truth.grid.coordinate_vectors[0][-1]])
+            ax.set_ylim([ground_truth.grid.coordinate_vectors[1][0], ground_truth.grid.coordinate_vectors[1][-1]])
+            wandb_log['rollouts_plot'] = wandb.Image(fig3)
+            fig4, ax = plt.subplots()
+            ax.plot(another_log['values_over_trajs'][::10].T)
+            ax.plot(torch.zeros_like(another_log['values_over_trajs'][0]), 'k--')
+            ax.set_ylim([-1, 1])
+            wandb_log['rollouts_values_plot'] = wandb.Image(fig4)
+            fig5, ax = plt.subplots()
+            ax.plot(another_log['cost_over_trajs'][::10].T)
+            ax.plot(torch.zeros_like(another_log['cost_over_trajs'][0]), 'k--')
+            ax.set_ylim([-1, 1])
+            wandb_log['rollouts_costs_plot'] = wandb.Image(fig5)
         wandb_log['step'] = epoch
         wandb_log['val_plot'] = wandb.Image(fig)
         if hasattr(self.validation_metrics, 'include_plot'):
