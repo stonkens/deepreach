@@ -87,6 +87,11 @@ class GroundTruthHJSolution:
         else:
             return True
 
+    def validate(self, states):
+        states = t2j(states.clone())
+        values = j2t(self.get_values(states, self.times[-1].repeat(states.shape[0])))  # Values at convergence
+        return values >= 0
+
 
 class CompareWithAlternative:
     def __init__(self, orig_dynamics, alt_method, comparsion_metrics, eval_states, eval_times, add_temporal_data=True):
@@ -188,7 +193,8 @@ class CompareWithAlternative:
 
 class EmpiricalPerformance:
     def __init__(self, dynamics, dt, sample_generator = None, sample_validator = None, violation_validator = None,
-                 batch_size=100000, samples_per_round_multiplier=5.0, fixed_vf=True, device='cuda'):
+                 batch_size=100000, samples_per_round_multiplier=5.0, fixed_vf=True, device='cuda', fixed_samples=False,
+                 fixed_samples_validator=None):
         self.dynamics = dynamics
         self.dt = dt  # dt in forward simulation
         self.sample_generator = sample_generator
@@ -207,6 +213,11 @@ class EmpiricalPerformance:
         self.samples_per_round_multiplier = samples_per_round_multiplier
         self.fixed_vf = fixed_vf  # If fixed_vf is True, we keep the value function fixed (as if it converged)
         self.device = device
+        self.fixed_samples = fixed_samples
+        self.fixed_samples_validator = fixed_samples_validator
+        if self.fixed_samples:
+            assert self.fixed_samples_validator is not None, "Fixed sample validator must be provided for fixed samples"
+            _, self.sampling_states = self.generate_samples(None, 1.0, 1.0, self.fixed_samples_validator)
 
     def get_values(self, coordinates, model, **kwargs):
         with torch.no_grad():
@@ -225,6 +236,30 @@ class EmpiricalPerformance:
         # you can save some RAM by deleting the model here (and running torch.cuda.empty_cache())
         return next_states, controls, disturbances
     
+    def generate_samples(self, model, times_lo, times_hi, fixed_samples_validator=None):
+        num_samples = int(self.samples_per_round_multiplier * self.batch_size)
+        sample_times = torch.zeros(self.batch_size, )
+        sample_states = torch.zeros(self.batch_size, self.dynamics.state_dim)
+
+        num_scenarios = 0
+        while num_scenarios < self.batch_size:
+            candidate_sample_times = torch.ceil((torch.rand((num_samples)) * (times_hi - times_lo) + times_lo) / self.dt) * self.dt
+            candidate_sample_states = self.dynamics.equivalent_wrapped_state(self.sample_generator.sample(num_samples))
+            candidate_sample_coords = torch.cat((candidate_sample_times.unsqueeze(-1), candidate_sample_states), dim=-1)
+
+            if fixed_samples_validator is not None:
+                valid_candidate_idis = torch.where(fixed_samples_validator.validate(candidate_sample_states))[0].detach().cpu()
+            else:
+                candidate_values = self.get_values(candidate_sample_coords, model)
+                valid_candidate_idis = torch.where(self.sample_validator.validate(candidate_sample_coords, candidate_values))[0].detach().cpu()
+            valid_candidate_idis = valid_candidate_idis[:self.batch_size - num_scenarios]  # Remove any excess
+            num_valid_idis = len(valid_candidate_idis)
+            sample_times[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_times[valid_candidate_idis]
+            sample_states[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_states[valid_candidate_idis]
+            num_scenarios += num_valid_idis
+        
+        return sample_times, sample_states
+
     def __call__(self, model, vf_times, rollout_times=None):
         """
             model: torch.nn.Module to use for finding valid sample points + optionally performing rollouts (if NN)
@@ -242,27 +277,12 @@ class EmpiricalPerformance:
         else:
             # We take different times for which we start evaluating
             times_lo, times_hi = vf_times
-        
-        num_samples = int(self.samples_per_round_multiplier * self.batch_size)
-        sample_times = torch.zeros(self.batch_size, )
-        sample_states = torch.zeros(self.batch_size, self.dynamics.state_dim)
-        sample_values = torch.zeros(self.batch_size, )
-
-        num_scenarios = 0
-        while num_scenarios < self.batch_size:
-            candidate_sample_times = torch.ceil((torch.rand((num_samples)) * (times_hi - times_lo) + times_lo) / self.dt) * self.dt
-            candidate_sample_states = self.dynamics.equivalent_wrapped_state(self.sample_generator.sample(num_samples))
-            candidate_sample_coords = torch.cat((candidate_sample_times.unsqueeze(-1), candidate_sample_states), dim=-1)
-
-            candidate_values = self.get_values(candidate_sample_coords, model)
-
-            valid_candidate_idis = torch.where(self.sample_validator.validate(candidate_sample_coords, candidate_values))[0].detach().cpu()
-            valid_candidate_idis = valid_candidate_idis[:self.batch_size - num_scenarios]  # Remove any excess
-            num_valid_idis = len(valid_candidate_idis)
-            sample_times[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_times[valid_candidate_idis]
-            sample_states[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_states[valid_candidate_idis]
-            sample_values[num_scenarios:num_scenarios + num_valid_idis] = candidate_values[valid_candidate_idis]
-            num_scenarios += num_valid_idis
+    
+        if self.fixed_samples:
+            sample_times = torch.ceil((torch.rand((self.batch_size)) * (times_hi - times_lo) + times_lo) / self.dt) * self.dt
+            sample_states = self.sampling_states
+        else:
+            sample_times, sample_states = self.generate_samples(model, times_lo, times_hi)
 
         if self.fixed_vf and (rollout_times is not None):
             if isinstance(rollout_times, float):
@@ -278,11 +298,13 @@ class EmpiricalPerformance:
             traj_times_hi = times_hi
             traj_sample_times = sample_times
 
-
         state_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1), self.dynamics.state_dim)
         controls_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt), self.dynamics.control_dim)
+        cost_over_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1))
+        values_over_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1))
         state_trajs[:, 0] = sample_states
-
+        cost_over_trajs[:, 0] = self.dynamics.boundary_fn(sample_states)
+        
         for k in range(int((traj_times_hi) / self.dt)):
             traj_time = traj_times_hi - k * self.dt
             if self.fixed_vf:
@@ -291,6 +313,7 @@ class EmpiricalPerformance:
                 model_input_time = torch.zeros(self.batch_size, 1).fill_(traj_time)
 
             curr_coords = torch.cat((model_input_time, state_trajs[:, k]), dim=-1).to(self.device)
+            values_over_trajs[:, k] = self.get_values(curr_coords, model)
             next_states, controls, dists = self.get_optimal_trajectory(curr_coords, model)
             
             not_started_times = traj_sample_times < (traj_time - self.dt / 2)
@@ -298,6 +321,12 @@ class EmpiricalPerformance:
             state_trajs[not_started_times, k + 1] = state_trajs[not_started_times, k]
             state_trajs[started_times, k + 1] = next_states[started_times].to('cpu')
             controls_trajs[started_times, k] = controls[started_times].to('cpu')
+            cost_over_trajs[:, k + 1] = self.dynamics.boundary_fn(state_trajs[:, k + 1])
+        
+        curr_coords = torch.cat((model_input_time, state_trajs[:, -1]), dim=-1).to(self.device)
+        values_over_trajs[:, -1] = self.get_values(curr_coords, model)  
+
+        sample_values = values_over_trajs[:, 0]
         batch_scenario_costs = self.dynamics.cost_fn(state_trajs)
         batch_value_errors = batch_scenario_costs - sample_values
         batch_value_mse = torch.mean(batch_value_errors ** 2)
@@ -308,7 +337,9 @@ class EmpiricalPerformance:
             'trajectories': state_trajs,
             'values': sample_values,
             'controls_trajs': controls_trajs,
-            'batch_values': batch_scenario_costs
+            'batch_values': batch_scenario_costs,
+            'values_over_trajs': values_over_trajs,
+            'cost_over_trajs': cost_over_trajs
         }
         return log_dict
 
