@@ -98,6 +98,8 @@ class Experiment(ABC):
         if hasattr(self.validation_metrics, 'include_plot'):
             fig2 = plt.figure(figsize=(6*len(zs), 5*len(times)))
             gs2 = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
+            fig3 = plt.figure(figsize=(6*len(zs), 5*len(times)))
+            gs3 = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
         for i in range(len(times)):
             for j in range(len(zs)):
                 coords = torch.zeros(x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
@@ -141,14 +143,29 @@ class Experiment(ABC):
                     ax2.imshow(1*(values_validation.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
                     ax2.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
                     ax2.set_title(ax_title)
+                    ax3 = fig3.add_subplot(gs3[i, j])
+                    difference = values_validation - values
+                    s3 = ax3.contourf(xs_plot, ys_plot, difference.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=10, vmin=-0.2, vmax=0.2)
+                    ax3.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+                    ax3.set_title(ax_title)
+
                 # fig.colorbar(s) 
             cax = fig.add_subplot(gs[i, -1])
             fig.colorbar(s, cax=cax, orientation='vertical')#, shrink=0.5, aspect=20)
             if hasattr(self.validation_metrics, 'include_plot'):
                 cax2 = fig2.add_subplot(gs2[i, -1])
                 fig2.colorbar(s, cax=cax2, orientation='vertical')
+                cax3 = fig3.add_subplot(gs3[i, -1])
+                fig3.colorbar(s3, cax=cax3, orientation='vertical')
+                # give the fig a title
+                fig3.suptitle("Ground Truth - Model")
         fig.tight_layout()
-        fig.savefig(save_path)
+        if save_path.endswith('.png'):
+            fig.savefig(save_path)
+        else:
+            fig.savefig(os.path.join(save_path, 'validation.png'))
+            fig3.savefig(os.path.join(save_path, 'validation_diff.png'))
+            return # FIXME: Currently to force being in test mode
 
         # Add possible progress evaluation metrics here
         wandb_log = self.validation_metrics(self.model, add_temporal_data=True)
@@ -163,7 +180,7 @@ class Experiment(ABC):
                 if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
                     mod_key = 'gt_' + key
                     wandb_log[mod_key] = value
-            fig3, ax = plt.subplots()
+            fig4, ax = plt.subplots()
             ax.plot(another_log['trajectories'][:, :, 0].T, another_log['trajectories'][:, :, 1].T)
             ax.plot(another_log['trajectories'][:,:1, 0].T, another_log['trajectories'][:,:1, 1].T, '*')
             ground_truth = self.validation_metrics.alt_method
@@ -171,21 +188,22 @@ class Experiment(ABC):
             ax.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
             ax.set_xlim([ground_truth.grid.coordinate_vectors[0][0], ground_truth.grid.coordinate_vectors[0][-1]])
             ax.set_ylim([ground_truth.grid.coordinate_vectors[1][0], ground_truth.grid.coordinate_vectors[1][-1]])
-            wandb_log['rollouts_plot'] = wandb.Image(fig3)
-            fig4, ax = plt.subplots()
+            wandb_log['rollouts_plot'] = wandb.Image(fig4)
+            fig5, ax = plt.subplots()
             ax.plot(another_log['values_over_trajs'][::10].T)
             ax.plot(torch.zeros_like(another_log['values_over_trajs'][0]), 'k--')
             ax.set_ylim([-1, 1])
-            wandb_log['rollouts_values_plot'] = wandb.Image(fig4)
-            fig5, ax = plt.subplots()
+            wandb_log['rollouts_values_plot'] = wandb.Image(fig5)
+            fig6, ax = plt.subplots()
             ax.plot(another_log['cost_over_trajs'][::10].T)
             ax.plot(torch.zeros_like(another_log['cost_over_trajs'][0]), 'k--')
             ax.set_ylim([-1, 1])
-            wandb_log['rollouts_costs_plot'] = wandb.Image(fig5)
+            wandb_log['rollouts_costs_plot'] = wandb.Image(fig6)
         wandb_log['step'] = epoch
         wandb_log['val_plot'] = wandb.Image(fig)
         if hasattr(self.validation_metrics, 'include_plot'):
             wandb_log['val_plot_gt'] = wandb.Image(fig2)
+            wandb_log['val_plot_diff'] = wandb.Image(fig3)
         if self.use_wandb:
             wandb.log(wandb_log)
         plt.close()
@@ -602,7 +620,10 @@ class Experiment(ABC):
             print('running specific-checkpoint testing')
             self._load_checkpoint(checkpoint_toload)
             # Get max time of checkpoint from the name (model_epoch_%04d.pth)
+            if checkpoint_toload == -1:
+                checkpoint_toload = self.dataset.counter_end
             checkpoint_max_time = checkpoint_toload / (self.dataset.tMax - self.dataset.tMin) / self.dataset.counter_end
+            
             curr_t = max(0, checkpoint_max_time)
             if self.dataset.dynamics.state_dim <= 5:
             # Get the name of the dynamics class
@@ -636,6 +657,12 @@ class Experiment(ABC):
             for key, value in results.items():
                 if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
                     print('%s: %f' % (key, value))
+
+            # Jaccard index calculation
+            metrics = self.validation_metrics(self.model, add_temporal_data=True)
+            for key, value in metrics.items():
+                # if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                print('%s: %f' % (key, value))
             
             plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
             plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
@@ -646,8 +673,14 @@ class Experiment(ABC):
             plt.ylim([-0.2, 2.8])
             plt.savefig(os.path.join(testing_dir, 'trajectory.png'))
             pickle.dump(results, open(os.path.join(testing_dir, 'results.pkl'), 'wb'))
-            
 
+            val_x_resolution = 200
+            val_y_resolution = 200
+            val_z_resolution = 3
+            val_time_resolution = 5
+            self.use_wandb = False
+            self.validate(0, save_path=testing_dir, x_resolution = val_x_resolution, y_resolution = val_y_resolution, 
+                          z_resolution=val_z_resolution, time_resolution=val_time_resolution)
         if was_training:
             self.model.train()
             self.model.requires_grad_(True)
