@@ -28,6 +28,14 @@ import inspect
 
 class Experiment(ABC):
     def __init__(self, model, dataset, experiment_dir, use_wandb, device, validation_dict={}):
+        """
+        Sets up the experiment with the model, dataset, and experiment directory.
+        For validation it does the following:
+        - If state_dim <= 5, it generates ground truth for the validation metrics and logs gt solutions
+        - It sets up the validation metrics for every validation step (distinction between visual and non-visual)
+
+        TODO: Ideally we specify the validation metrics to use in the setup, but for now it is hardcoded
+        """
         self.model = model
         self.dataset = dataset
         self.experiment_dir = experiment_dir
@@ -40,6 +48,7 @@ class Experiment(ABC):
         self.validation_metrics.append(self.safety_plot_validation)
         if self.dataset.dynamics.state_dim <= 5:
             # Generate ground truth for the validation metrics
+            # TODO: Move this into GroundTruthHJSolution initialization
             dynamics_class_name = self.dataset.dynamics.__class__.__name__
             dynamics_class = getattr(dynamics_hjr, dynamics_class_name)
             dynamics_params = inspect.signature(dynamics_class).parameters
@@ -108,8 +117,6 @@ class Experiment(ABC):
         self.validation_metrics.append(traj_rollout)
         self.visual_only_validation_metrics.append(traj_rollout_viz)
 
-
-
     @abstractmethod
     def init_special(self):
         raise NotImplementedError
@@ -122,7 +129,7 @@ class Experiment(ABC):
             model_path = os.path.join(self.experiment_dir, 'training', 'checkpoints', 'model_epoch_%04d.pth' % epoch)
             self.model.load_state_dict(torch.load(model_path)['model'])
 
-    def validate(self, epoch, save_path, x_resolution, y_resolution, z_resolution, time_resolution):
+    def validate(self, epoch):
         was_training = self.model.training
         self.model.eval()
         self.model.requires_grad_(False)
@@ -540,9 +547,7 @@ class Experiment(ABC):
                         os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % (epoch+1)))
                     np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % (epoch+1)),
                         np.array(train_losses))
-                    self.validate(
-                        epoch=epoch+1, save_path=os.path.join(checkpoints_dir, 'BRS_validation_plot_epoch_%04d.png' % (epoch+1)),
-                        x_resolution = val_x_resolution, y_resolution = val_y_resolution, z_resolution=val_z_resolution, time_resolution=val_time_resolution)
+                    self.validate(epoch=epoch+1)
 
         if was_eval:
             self.model.eval()
@@ -552,94 +557,95 @@ class Experiment(ABC):
         was_training = self.model.training
         self.model.eval()
         self.model.requires_grad_(False)
+        raise NotImplementedError
+        # FIXME: Rewrite this function to use the new validation metrics
+        # testing_dir = os.path.join(self.experiment_dir, 'testing_%s' % current_time.strftime('%m_%d_%Y_%H_%M'))
+        # if os.path.exists(testing_dir):
+        #     overwrite = input("The testing directory %s already exists. Overwrite? (y/n)"%testing_dir)
+        #     if not (overwrite == 'y'):
+        #         print('Exiting.')
+        #         quit()
+        #     shutil.rmtree(testing_dir)
+        # os.makedirs(testing_dir)
 
-        testing_dir = os.path.join(self.experiment_dir, 'testing_%s' % current_time.strftime('%m_%d_%Y_%H_%M'))
-        if os.path.exists(testing_dir):
-            overwrite = input("The testing directory %s already exists. Overwrite? (y/n)"%testing_dir)
-            if not (overwrite == 'y'):
-                print('Exiting.')
-                quit()
-            shutil.rmtree(testing_dir)
-        os.makedirs(testing_dir)
+        # if checkpoint_toload is None:
+        #     print('running cross-checkpoint testing')
+        #     models = os.path.join(self.experiment_dir, 'training', 'checkpoints')
+        #     checkpoints = [int(f.split('_')[-1].split('.')[0]) for f in os.listdir(models) if 'model_epoch' in f]
 
-        if checkpoint_toload is None:
-            print('running cross-checkpoint testing')
-            models = os.path.join(self.experiment_dir, 'training', 'checkpoints')
-            checkpoints = [int(f.split('_')[-1].split('.')[0]) for f in os.listdir(models) if 'model_epoch' in f]
+        #     for i in tqdm(range(len(checkpoints)), desc='Checkpoint'):
+        #         self._load_checkpoint(epoch=checkpoints[i])
+        #         raise NotImplementedError
 
-            for i in tqdm(range(len(checkpoints)), desc='Checkpoint'):
-                self._load_checkpoint(epoch=checkpoints[i])
-                raise NotImplementedError
-
-        else:
-            import matplotlib.pyplot as plt
-            print('running specific-checkpoint testing')
-            self._load_checkpoint(checkpoint_toload)
-            # Get max time of checkpoint from the name (model_epoch_%04d.pth)
-            if checkpoint_toload == -1:
-                checkpoint_toload = self.dataset.counter_end
-            checkpoint_max_time = checkpoint_toload / (self.dataset.tMax - self.dataset.tMin) / self.dataset.counter_end
+        # else:
+        #     import matplotlib.pyplot as plt
+        #     print('running specific-checkpoint testing')
+        #     self._load_checkpoint(checkpoint_toload)
+        #     # Get max time of checkpoint from the name (model_epoch_%04d.pth)
+        #     if checkpoint_toload == -1:
+        #         checkpoint_toload = self.dataset.counter_end
+        #     checkpoint_max_time = checkpoint_toload / (self.dataset.tMax - self.dataset.tMin) / self.dataset.counter_end
             
-            curr_t = max(0, checkpoint_max_time)
-            if self.dataset.dynamics.state_dim <= 5:
-            # Get the name of the dynamics class
-                self.cost_validation = EmpiricalPerformance(self.dataset.dynamics, 0.002, device=self.device,
-                                                            batch_size=100, fixed_samples=True, 
-                                                            fixed_samples_validator=self.validation_metrics.alt_method)
+        #     curr_t = max(0, checkpoint_max_time)
+        #     if self.dataset.dynamics.state_dim <= 5:
+        #     # Get the name of the dynamics class
+        #         self.cost_validation = EmpiricalPerformance(self.dataset.dynamics, 0.002, device=self.device,
+        #                                                     batch_size=100, fixed_samples=True, 
+        #                                                     fixed_samples_validator=self.validation_metrics.alt_method)
             
             
-                results = self.cost_validation(self.model, vf_times=curr_t-0.1, rollout_times=1.0)
-                print("Ground truth comparison")
-                for key, value in results.items():
-                    if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                        print('%s: %f' % (key, value))
+        #         results = self.cost_validation(self.model, vf_times=curr_t-0.1, rollout_times=1.0)
+        #         print("Ground truth comparison")
+        #         for key, value in results.items():
+        #             if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+        #                 print('%s: %f' % (key, value))
                 
-                plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
-                plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
-                ground_truth = self.validation_metrics.alt_method
-                plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
-                plt.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
-                plt.xlim([-5, 5])
-                plt.ylim([-0.2, 2.8])
-                plt.savefig(os.path.join(testing_dir, 'trajectory_guaranteed_safe.png'))
+        #         plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
+        #         plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
+        #         ground_truth = self.validation_metrics.alt_method
+        #         plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
+        #         plt.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
+        #         plt.xlim([-5, 5])
+        #         plt.ylim([-0.2, 2.8])
+        #         plt.savefig(os.path.join(testing_dir, 'trajectory_guaranteed_safe.png'))
 
-                fig, ax = plt.subplots()
-                ax.plot(results['values_over_trajs'][::10].T)
-                ax.set_ylim([-1, 1])
-                fig.savefig(os.path.join(testing_dir, 'values_over_trajs.png'))
+        #         fig, ax = plt.subplots()
+        #         ax.plot(results['values_over_trajs'][::10].T)
+        #         ax.set_ylim([-1, 1])
+        #         fig.savefig(os.path.join(testing_dir, 'values_over_trajs.png'))
 
-            self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.001, device=self.device, batch_size=100)
-            results = self.emperical_cost_validation_metric(self.model, vf_times=[max(0, curr_t - 0.1), curr_t], rollout_times=1.0)
-            for key, value in results.items():
-                if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                    print('%s: %f' % (key, value))
+        #     self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.001, device=self.device, batch_size=100)
+        #     results = self.emperical_cost_validation_metric(self.model, vf_times=[max(0, curr_t - 0.1), curr_t], rollout_times=1.0)
+        #     for key, value in results.items():
+        #         if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+        #             print('%s: %f' % (key, value))
 
-            # Jaccard index calculation
-            metrics = self.validation_metrics(self.model, add_temporal_data=True)
-            for key, value in metrics.items():
-                # if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                print('%s: %f' % (key, value))
+        #     # Jaccard index calculation
+        #     metrics = self.validation_metrics(self.model, add_temporal_data=True)
+        #     for key, value in metrics.items():
+        #         # if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+        #         print('%s: %f' % (key, value))
             
-            plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
-            plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
-            ground_truth = self.validation_metrics.alt_method
-            plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
-            plt.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
-            plt.xlim([-5, 5])
-            plt.ylim([-0.2, 2.8])
-            plt.savefig(os.path.join(testing_dir, 'trajectory.png'))
-            pickle.dump(results, open(os.path.join(testing_dir, 'results.pkl'), 'wb'))
+        #     plt.plot(results['trajectories'][..., 0].T, results['trajectories'][..., 1].T)
+        #     plt.plot(results['trajectories'][:,:1, 0].T, results['trajectories'][:,:1, 1].T, '*')
+        #     ground_truth = self.validation_metrics.alt_method
+        #     plt.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
+        #     plt.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
+        #     plt.xlim([-5, 5])
+        #     plt.ylim([-0.2, 2.8])
+        #     plt.savefig(os.path.join(testing_dir, 'trajectory.png'))
+        #     pickle.dump(results, open(os.path.join(testing_dir, 'results.pkl'), 'wb'))
 
-            val_x_resolution = 200
-            val_y_resolution = 200
-            val_z_resolution = 3
-            val_time_resolution = 5
-            self.use_wandb = False
-            self.validate(0, save_path=testing_dir, x_resolution = val_x_resolution, y_resolution = val_y_resolution, 
-                          z_resolution=val_z_resolution, time_resolution=val_time_resolution)
-        if was_training:
-            self.model.train()
-            self.model.requires_grad_(True)
+        #     val_x_resolution = 200
+        #     val_y_resolution = 200
+        #     val_z_resolution = 3
+        #     val_time_resolution = 5
+        #     self.use_wandb = False
+        #     self.validate(0, save_path=testing_dir, x_resolution = val_x_resolution, y_resolution = val_y_resolution, 
+        #                   z_resolution=val_z_resolution, time_resolution=val_time_resolution)
+        # if was_training:
+        #     self.model.train()
+        #     self.model.requires_grad_(True)
 
 class DeepReach(Experiment):
     def init_special(self):

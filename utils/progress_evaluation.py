@@ -35,6 +35,12 @@ class EvaluationMetric(ABC):
 
 
 class VisualizeSafeSet2D(EvaluationMetric):
+    """
+    Purpose: Visualize the safe set of the current model in 2D for different slices of time and other states.
+    How to adjust the visualization:
+    - Modify val_dict to change the resolution of the grid, the time slices, and the state slices.
+    - Modify state_test_range and plot_config in the dynamics function to change the range and state slices.
+    """
     def __init__(self, dataset, val_dict):
         self.dataset = dataset
         self.val_dict = val_dict
@@ -49,7 +55,13 @@ class VisualizeSafeSet2D(EvaluationMetric):
             model_eval: Function to evaluate the model on given coordinates.
             model_eval_grad: Gradient of the model evaluation function (unused here).
             vis_type: Visualization type ('imshow' or 'contourf'). imshow is a binary plot, contourf is a continuous plot.
+        
+        Steps:
+        1) Find the coords corresponding to visualization points.
+        2) Create figure with subplots for each time slice and state slice.
+        3) In a for loop (over each individual subplot): Evaluate model at coords, plot the values, and plot boundary.
         """
+        ########### Set up evaluation coords ###########
         import matplotlib.pyplot as plt
         import matplotlib
         plot_config = self.dataset.dynamics.plot_config()
@@ -83,9 +95,11 @@ class VisualizeSafeSet2D(EvaluationMetric):
             zs = torch.linspace(z_min, z_max, z_resolution)
         xys = torch.cartesian_prod(xs, ys)
         
+        ########### Setup visualization ###########
         fig = plt.figure(figsize=(6*len(zs), 5*len(times)))
         gs = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
 
+        ########### Computing and plotting values ###########
         for i in range(len(times)):
             for j in range(len(zs)):
                 coords = torch.zeros(x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
@@ -103,7 +117,6 @@ class VisualizeSafeSet2D(EvaluationMetric):
                     values = model_eval(coords)
                     sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(values.device))
 
-                # ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
                 ax = fig.add_subplot(gs[i, j])
 
                 if isinstance(plot_config['z_axis_idx'], list):
@@ -125,9 +138,8 @@ class VisualizeSafeSet2D(EvaluationMetric):
                 ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
                 ax.set_title(ax_title)
 
-                # fig.colorbar(s) 
             cax = fig.add_subplot(gs[i, -1])
-            fig.colorbar(s, cax=cax, orientation='vertical')#, shrink=0.5, aspect=20)
+            fig.colorbar(s, cax=cax, orientation='vertical')
         fig.tight_layout()
         if self.save_path is not None:
             if self.save_path.endswith('.png'):
@@ -139,24 +151,44 @@ class VisualizeSafeSet2D(EvaluationMetric):
 
 
 class VisualizeSafeSet2DHJR(VisualizeSafeSet2D):
+    """
+    Purpose: HJ implementation of VisualizeSafeSet2D
+    """
     def __init__(self, dataset, val_dict, ground_truth):
         self.ground_truth = ground_truth
         super().__init__(dataset, val_dict)
     
     def __call__(self, model_eval, model_eval_grad):
+        """
+        Generate and visualize the safe set of the ground truth model (see VisualizeSafeSet2D for details).
+        Args:
+            model_eval: Function to evaluate the model on given coordinates.
+            model_eval_grad: Gradient of the model evaluation function (unused here). 
+        """
         model_eval = lambda x: self.ground_truth.value_from_coords(x)
         log_dict = super().__call__(model_eval, model_eval_grad)
+        # Modify the keys to include _gt in the key to distinguish from the model
         new_dict = {}
         for key, value in log_dict.items():
             new_dict[key + "_gt"] = value
         return new_dict
 
 class VisualizeValueDifference2D(VisualizeSafeSet2D):
+    """
+    Purpose: Visualize the difference between the model and the ground truth in 2D for different slices of time and 
+             other states.
+    See VisualizeSafeSet2D for details on how to adjust the visualization.
+    """
     def __init__(self, dataset, val_dict, ground_truth):
         self.ground_truth = ground_truth
         super().__init__(dataset, val_dict)
 
     def __call__(self, model_eval, model_eval_grad):
+        """
+        Args:
+            model_eval: Function to evaluate the model on given coordinates.
+            model_eval_grad: Gradient of the model evaluation function (unused here). 
+        """
         new_eval = lambda x: model_eval(x) - self.ground_truth.value_from_coords(x)
         log_dict = super().__call__(new_eval, model_eval_grad, vis_type='contourf')
         new_dict = {}
@@ -164,10 +196,21 @@ class VisualizeValueDifference2D(VisualizeSafeSet2D):
             new_dict[key + "_diff"] = value
         return new_dict
 
-            # self.validation_metrics = CompareWithAlternative(self.dataset.dynamics, gt, [], 
-            #                                                  gt.grid.states.reshape(-1, gt.grid.ndim), gt.times)
 class QuantifyBinarySafety(EvaluationMetric):
+    """
+    Purpose: Quantifiable metrics on (safe v unsafe) states for the model. 
+    How to adjust the visualization:
+    - Modify val_dict to change the resolution of the grid and the time slices
+        NOTE: Expects different grid and resolution compared to VisualizeSafeSet2D (this should be over all states)
+    """
     def __init__(self, dataset, val_dict):
+        """
+        Same eval_states and eval_times for all evaluations.
+        Args:
+            dataset: Dataset object
+            val_dict: Dictionary of evaluation parameters
+        add_temporal_data: Whether to add temporal data (at different value function slices) to the log_dict
+        """
         self.dataset = dataset
         time_resolution = val_dict.get('time_resolution', 5)
         self.eval_times = torch.linspace(self.dataset.tMin, self.dataset.tMax, time_resolution).to('cuda')
@@ -179,13 +222,20 @@ class QuantifyBinarySafety(EvaluationMetric):
         self.add_temporal_data = val_dict.get('add_temporal_data', True)
 
     def __call__(self, model_eval, model_eval_grad):
+        """
+        Evaluate the model on the eval_states and eval_times. These grids are often dense and require batching to not
+        exceed GPU memory.
+        Args:
+            model_eval: Function to evaluate the model on given coordinates.
+            model_eval_grad: Gradient of the model evaluation function (unused here). 
+        """
         with torch.no_grad():
             values = []
             for timestep in self.eval_times.to(self.eval_states.device):
                 coords = torch.cat((torch.zeros(self.eval_states.shape[0], 1).fill_(timestep).to(self.eval_states.device), self.eval_states), dim=-1)
                 # Split into different batch sizes
                 vals = []
-                for i in range(0, coords.shape[0], 62500):
+                for i in range(0, coords.shape[0], 62500):  # FIXME: Hardcoded batch size
                     vals.append(model_eval(coords[i:i+62500]))
                 vals = torch.cat(vals, dim=0)
                 values.append(vals[torch.newaxis])
@@ -203,6 +253,12 @@ class QuantifyBinarySafety(EvaluationMetric):
 
 
 class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
+    """
+    Purpose: Quantifiable metrics on (safe v unsafe) states for the model with a comparison to ground truth.
+    Includes IOU (Jaccard index) and false positive and false negative rates.
+    See QuantifyBinarySafety for details on how to adjust the visualization.
+    FIXME: If the grid is the same, we require the same time_resolution for the ground truth and the validation points.
+    """
     def __init__(self, dataset, val_dict, ground_truth=None):
         super().__init__(dataset, val_dict)
         self.ground_truth = ground_truth
@@ -217,6 +273,15 @@ class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
 
 
     def __call__(self, model_eval, model_eval_grad):
+        """
+        Evaluate the model on the eval_states and eval_times. These grids are often dense and require batching to not
+        exceed GPU memory.
+        Args:
+            model_eval: Function to evaluate the model on given coordinates
+            model_eval_grad: Gradient of the model evaluation function (unused here).
+
+        Unlike Visualization functions, this function does not modify model_eval and instead stores ground truth values.
+        """
         with torch.no_grad():
             values = []
             for timestep in self.eval_times.to(self.eval_states.device):
@@ -265,6 +330,16 @@ class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
  
 
 class RolloutTrajectories(EvaluationMetric):
+    """
+    Purpose: Evaluate the model with rollouts from the value function.
+    Specifically we can do the following rollouts:
+    - Time varying rollouts: "Surf" the value function for t seconds (rollout is also t seconds)
+    - Time invariant rollouts: Consider a converged value function (no time variation) and rollout for t seconds
+    - Fixed samples: Use fixed samples for the rollout (e.g. to provide consistent comparison in training validation)
+
+    How to adjust the metrics:
+    - Modify val_dict to change the dt, rollout_batch_size, samples_per_round_multiplier, and the sample_generator.
+    """
     def __init__(self, dataset, val_dict, is_time_invariant=True):
         self.dataset = dataset
         self.dynamics = dataset.dynamics
@@ -283,6 +358,15 @@ class RolloutTrajectories(EvaluationMetric):
         self.device = 'cuda'  # FIXME: Hardcoded for now   
 
     def generate_samples(self, model_eval, times_lo, times_hi, fixed_samples_validator=None):
+        """
+        Generate samples for the starting/initial state and times (jointly coords) for the rollout.
+        Args:
+            model_eval: Function to evaluate the model on given coordinates.
+            times_lo: Lower bound of the time interval
+            times_hi: Upper bound of the time interval
+            fixed_samples_validator: Validator for fixed samples (if applicable), instead of using model_eval!
+                - Used for e.g. comparing the model to the ground truth
+        """
         num_samples = int(self.samples_per_round_multiplier * self.batch_size)
         sample_times = torch.zeros(self.batch_size, )
         sample_states = torch.zeros(self.batch_size, self.dynamics.state_dim)
@@ -307,17 +391,32 @@ class RolloutTrajectories(EvaluationMetric):
         return sample_times, sample_states
 
     def get_optimal_trajectory(self, curr_coords, model_eval_grad):
+        """
+        Implement optimal trajectory for the model over one time step.
+        u and d are the optimal control and disturbance associated with the Hamiltonian.
+        u = argmax_u model_eval_grad(x) * f(x, u, d)
+        d = argmin_d model_eval_grad(x) * f(x, u, d)
+        x_{t+1} = x_t + dt * f(x, u, d)
+        """
         dvs = model_eval_grad(curr_coords)
         controls = self.dynamics.optimal_control(curr_coords[:, 1:], dvs[..., 1:])
         disturbances = self.dynamics.optimal_disturbance(curr_coords[:, 1:], dvs[..., 1:])
         next_states = (curr_coords[:, 1:] + self.dt * self.dynamics.dsdt(curr_coords[:, 1:], controls, disturbances))
         return next_states, controls, disturbances
         
-    def get_coords(self, time_interval):
-        sample_times, samples_states = self.generate_samples(None, time_interval[0], time_interval[1])
-        return sample_times, samples_states
+    def get_coords(self, model_eval, time_interval):
+        """
+        Generate sample coordinates (initial time) given the model (to validate states) and the time interval.
+        This function is modified in subclasses to provide different types of rollouts (for the state specifically).        
+        """
+        sample_times, sample_states = self.generate_samples(model_eval, time_interval[0], time_interval[1])
+        return sample_times, sample_states
 
     def update_counters(self):
+        """
+        Update base class functionality. Here we update the vf_times (time at which to evaluate the value function) 
+        and the rollout times (time for which to rollout the trajectory).
+        """
         curr_t = self.dataset.tMin + (self.dataset.tMax - self.dataset.tMin) * self.dataset.counter / self.dataset.counter_end
         self.vf_times = [max(0, curr_t - 0.02), curr_t]
         if self.is_time_invariant:
@@ -326,17 +425,29 @@ class RolloutTrajectories(EvaluationMetric):
             self.rollout_times = self.vf_times
 
     def __call__(self, model_eval, model_eval_grad):
+        """
+        Evaluate the model with rollouts with controls and disturbances from the value function and its gradient.
+        Args:
+            model_eval: Function to evaluate the model on given coordinates.
+            model_eval_grad: Gradient of the model evaluation function (actually used here).
+        Steps:
+        1. Generate initial states and times (to eval the value function) for the rollout.
+        2. Determine the duration of the rollout (distinguishing time invariant from time varying).
+        3. Rollout trajectories
+        4. Evaluate performance of the trajectories
+        """
+        ########### Step 1: Generate initial states and times ###########
         if isinstance(self.vf_times, float):
-            # TODO: Maybe replace with explicit call in run_experiment to distinguish cases
-            # Here, we only evaluate the model with rollouts from the maximum time
             times_hi = self.vf_times
             times_lo = self.vf_times
         else:
-            # We take different times for which we start evaluating
+            # Randomize the start time (self.vf_times is a tuple)
             times_lo, times_hi = self.vf_times
 
-        sample_times, sample_states = self.get_coords((times_lo, times_hi))
+        # Generate samples for the rollout
+        sample_times, sample_states = self.get_coords(model_eval, (times_lo, times_hi))
 
+        ########### Step 2: Determine rollout duration ###########
         if self.is_time_invariant:
             if isinstance(self.rollout_times, float):
                 traj_times_hi = self.rollout_times
@@ -352,6 +463,7 @@ class RolloutTrajectories(EvaluationMetric):
             traj_times_hi = times_hi
             traj_sample_times = sample_times
 
+        ########### Step 3: Rollout the trajectories ###########
         state_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1), self.dynamics.state_dim)
         controls_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt), self.dynamics.control_dim)
         cost_over_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1))
@@ -379,6 +491,7 @@ class RolloutTrajectories(EvaluationMetric):
         curr_coords = torch.cat((model_input_time, state_trajs[:, -1]), dim=-1).to(self.device)
         values_over_trajs[:, -1] = model_eval(curr_coords).squeeze()
 
+        ########### Step 4: Evaluate performance the trajectories ###########
         sample_values = values_over_trajs[:, 0]
         batch_scenario_costs = self.dynamics.cost_fn(state_trajs)
         batch_value_errors = batch_scenario_costs - sample_values
@@ -401,21 +514,38 @@ class RolloutTrajectories(EvaluationMetric):
 
 
 class FixedRolloutTrajectories(RolloutTrajectories):
+    """
+    Purpose: Evaluate the model with rollouts from the value function with fixed samples.
+    - Useful for training validation where we want to compare the model over time
+    """
     def __init__(self, dataset, val_dict):
         RolloutTrajectories.__init__(self, dataset, val_dict)
         self.fixed_samples = True
         self.fixed_samples_validator = val_dict['fixed_samples_validator']
         _, self.sampling_states = self.generate_samples(None, 1.0, 1.0, self.fixed_samples_validator)
 
-    def get_coords(self, time_interval):
+    def get_coords(self, model_eval, time_interval):
         sample_times = torch.ceil((torch.rand((self.batch_size)) * (time_interval[1] - time_interval[0]) + 
                                    time_interval[0]) / self.dt) * self.dt
         sample_states = self.sampling_states
         return sample_times, sample_states
 
 
-class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories):        
+class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories): 
+    """
+    Purpose: Evaluate the model with rollouts from the value function and visualize the trajectories with fixed samples.
+    Be careful to adjust the batch_size to have the visualization be useful. 20 is a good starting point.
+    """       
     def __call__(self, model_eval, model_eval_grad):
+        """
+        Evaluate the model with rollouts and visualize the trajectories.
+        Args:
+            model_eval: Function to evaluate the model on given coordinates.
+            model_eval_grad: Gradient of the model evaluation function.
+        Steps:
+        1. Evaluate the model performance on rollouts by calling the parent class.
+        2. Visualize the trajectories.
+        """
         log_dict = FixedRolloutTrajectories.__call__(self, model_eval, model_eval_grad)
         import matplotlib.pyplot as plt
         plot_config = self.dataset.dynamics.plot_config()
@@ -459,6 +589,9 @@ class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories):
 
 
 class RolloutTrajectoriesHJR(RolloutTrajectories):
+    """
+    Purpose: HJR implementation of RolloutTrajectories
+    """
     def __init__(self, dataset, val_dict, ground_truth):
         RolloutTrajectories.__init__(self, dataset, val_dict)
         self.ground_truth = ground_truth
@@ -482,12 +615,15 @@ class RolloutTrajectoriesHJR(RolloutTrajectories):
     
 
 class FixedRolloutTrajectoriesHJR(FixedRolloutTrajectories, RolloutTrajectoriesHJR):
+    """
+    Purpose: HJR implementation of FixedRolloutTrajectories
+    """
     def __init__(self, dataset, val_dict, ground_truth):
         FixedRolloutTrajectories.__init__(self, dataset, val_dict)
         self.ground_truth = ground_truth
     
-    def get_coords(self, time_interval):
-        return FixedRolloutTrajectories.get_coords(self, time_interval)
+    def get_coords(self, model_eval, time_interval):
+        return FixedRolloutTrajectories.get_coords(self, model_eval, time_interval)
 
     def get_optimal_trajectory(self, curr_coords, model_eval_grad):
         return RolloutTrajectoriesHJR.get_optimal_trajectory(self, curr_coords, model_eval_grad)
@@ -497,6 +633,9 @@ class FixedRolloutTrajectoriesHJR(FixedRolloutTrajectories, RolloutTrajectoriesH
     
 
 class RolloutTrajectoriesWithVisualsHJR(RolloutTrajectoriesWithVisuals, FixedRolloutTrajectoriesHJR):
+    """
+    Purpose: HJR implementation of RolloutTrajectoriesWithVisuals
+    """
     def __init__(self, dataset, val_dict, ground_truth):
         FixedRolloutTrajectoriesHJR.__init__(self, dataset, val_dict, ground_truth)
     
