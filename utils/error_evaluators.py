@@ -12,6 +12,17 @@ class ValueThresholdValidator(Validator):
 
     def validate(self, coords, values):
         return (values >= self.v_min)*(values <= self.v_max)
+    
+
+class ValueThresholdEvaluatorandValidator(ValueThresholdValidator):
+    def __init__(self, eval_fn, v_min, v_max):
+        super().__init__(v_min, v_max)
+        self.eval_fn = eval_fn
+    
+    def validate(self, coords):
+        values = self.eval_fn(coords)
+        return super().validate(coords, values)
+
 
 class MLPValidator(Validator):
     def __init__(self, mlp, o_min, o_max, model, dynamics):
@@ -168,11 +179,12 @@ def scenario_optimization(model, policy, dynamics, tMin, tMax, dt, set_type, con
                 # need to round to nearest dt
                 batch_sample_times = torch.round(batch_sample_times/dt)*dt
             else:
+                # Start at tMax for all trajectories
                 batch_sample_times = torch.full((sample_batch_size, ), tMax)
             batch_sample_states = dynamics.equivalent_wrapped_state(sample_generator.sample(sample_batch_size))
             batch_sample_coords = torch.cat((batch_sample_times.unsqueeze(-1), batch_sample_states), dim=-1)
 
-            # validate batch
+            # validate all batch elements, select subsets that conform with sample_validator (based on coords and vals)
             with torch.no_grad():
                 batch_sample_model_results = model({'coords': dynamics.coord_to_input(batch_sample_coords.to(device))})
                 batch_sample_values = dynamics.io_to_value(batch_sample_model_results['model_in'].detach(), batch_sample_model_results['model_out'].squeeze(dim=-1).detach())
@@ -180,7 +192,7 @@ def scenario_optimization(model, policy, dynamics, tMin, tMax, dt, set_type, con
 
             # store valid samples
             num_valid_samples = len(batch_valid_sample_idxs)
-            start_idx = num_collected_scenarios
+            start_idx = num_collected_scenarios  # Counter for the while loop
             end_idx = min(start_idx + num_valid_samples, scenario_batch_size)
             batch_scenario_times[start_idx:end_idx] = batch_sample_times[batch_valid_sample_idxs][:end_idx-start_idx]
             batch_scenario_states[start_idx:end_idx] = batch_sample_states[batch_valid_sample_idxs][:end_idx-start_idx]
@@ -201,11 +213,14 @@ def scenario_optimization(model, policy, dynamics, tMin, tMax, dt, set_type, con
         dstb_trajs = torch.zeros(scenario_batch_size, int((tMax-tMin)/dt), dynamics.disturbance_dim)
         ham_trajs = torch.zeros(scenario_batch_size, int((tMax-tMin)/dt))
         
+        # Run the entire trajectory
         state_trajs[:, 0, :] = batch_scenario_states
         for k in tqdm(range(int((tMax-tMin)/dt)), desc='Trajectory Propagation', position=pbar_pos, leave=False):
             if control_type == 'value':
                 traj_time = tMax - k*dt
                 traj_times = torch.full((scenario_batch_size, ), traj_time)
+            else:
+                raise NotImplementedError("not yet implemented")
             # elif control_type == 'ttr':
             #     traj_times = get_tEarliest(model=model, dynamics=dynamics, state=state_trajs[:, k], tMin=tMin, tMax=traj_time, dt=dt, validator=sample_validator)
             # elif control_type == 'init_ttr':
@@ -221,6 +236,7 @@ def scenario_optimization(model, policy, dynamics, tMin, tMax, dt, set_type, con
             dstb_trajs[:, k] = dynamics.optimal_disturbance(traj_coords[:, 1:].to(device), traj_dvs[..., 1:].to(device))
             ham_trajs[:, k] = dynamics.hamiltonian(traj_coords[:, 1:].to(device), traj_dvs[..., 1:].to(device))
             
+            # Forward propagate with Forward Euler using the optimal control and disturbance
             if tStart_generator is not None: # freeze states whose start time has not been reached yet
                 is_frozen = batch_scenario_times < traj_times
                 is_unfrozen = torch.logical_not(is_frozen)
@@ -232,6 +248,8 @@ def scenario_optimization(model, policy, dynamics, tMin, tMax, dt, set_type, con
         # compute batch_scenario_costs
         # TODO: need to handle the case of using tStart_generator when extending a trajectory by a frozen initial state will inadvertently affect cost computation (the min lx cost formulation is unaffected, but other cost formulations might care)
         if set_type == 'BRT':
+            # Compute the cost l(\xi_{x0,t0}^{u(\cdot),d(\cdot)}(t)) for each trajectory
+            # x0: batch_scenario_states, t0: batch_scenario_times, u(\cdot): ctrl_trajs, d(\cdot): dstb_trajs
             batch_scenario_costs = dynamics.cost_fn(state_trajs.to(device))
         elif set_type == 'BRS':
             if control_type == 'init_ttr': # is this correct for init_ttr?

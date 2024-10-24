@@ -189,7 +189,12 @@ else:
     model.to(device)  # should be unnecessary
 
 experiment_class = getattr(experiments, orig_opt.experiment_class)
-experiment = experiment_class(model=model, dataset=dataset, experiment_dir=experiment_dir, use_wandb=use_wandb, device=device)
+validation_dict = {'x_resolution': orig_opt.val_x_resolution, 'y_resolution': orig_opt.val_y_resolution, 
+                   'z_resolution': orig_opt.val_z_resolution, 'time_resolution': orig_opt.val_time_resolution,
+                   'dt': 0.01}
+
+experiment = experiment_class(model=model, dataset=dataset, experiment_dir=experiment_dir, use_wandb=use_wandb, 
+                              device=device, validation_dict=validation_dict)
 experiment.init_special(**{argname: getattr(orig_opt, argname) for argname in inspect.signature(experiment_class.init_special).parameters.keys() if argname != 'self'})
 
 if (mode == 'all') or (mode == 'train'):

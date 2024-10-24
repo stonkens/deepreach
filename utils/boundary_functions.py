@@ -61,6 +61,7 @@ class Boundary(Obstacle):
                         - self.padding)
         return obstacle_sdf
 
+
 def build_sdf(boundary, obstacles):
     def sdf(x):
         sdf_val = boundary.boundary_sdf(x)
@@ -69,19 +70,7 @@ def build_sdf(boundary, obstacles):
             sdf_val = torch.minimum(sdf_val, obstacle_sdf)
         return sdf_val
     return sdf
-    
 
-def build_sdf(boundary, obstacles):
-    def sdf(x):
-        sdf_val = boundary.boundary_sdf(x)
-        for obstacle in obstacles:
-            obstacle_sdf = obstacle.obstacle_sdf(x)
-            if isinstance(x, torch.Tensor):
-                sdf_val = torch.minimum(sdf_val, obstacle_sdf)
-            elif isinstance(x, jnp.ndarray):
-                sdf_val = jnp.minimum(sdf_val, obstacle_sdf)
-        return sdf_val
-    return sdf
 
 class ObstacleJAX:
     def __init__(self, state_idis, padding):

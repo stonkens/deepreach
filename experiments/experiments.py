@@ -20,34 +20,95 @@ from collections import OrderedDict
 from datetime import datetime
 from sklearn import svm 
 from utils import diff_operators
-from utils.error_evaluators import scenario_optimization, ValueThresholdValidator, MultiValidator, MLPConditionedValidator, target_fraction, MLP, MLPValidator, SliceSampleGenerator
-from utils.progress_evaluation import CompareWithAlternative, GroundTruthHJSolution, EmpiricalPerformance
+from utils.error_evaluators import scenario_optimization, ValueThresholdValidator, ValueThresholdEvaluatorandValidator, SliceSampleGenerator
+from utils.progress_evaluation import *
+from utils.comparisons import GroundTruthHJSolution
 from dynamics import dynamics_hjr
 import inspect
 
 class Experiment(ABC):
-    def __init__(self, model, dataset, experiment_dir, use_wandb, device):
+    def __init__(self, model, dataset, experiment_dir, use_wandb, device, validation_dict={}):
         self.model = model
         self.dataset = dataset
         self.experiment_dir = experiment_dir
         self.use_wandb = use_wandb
         self.device = device
-        self.validation_metrics = lambda *args, **kwargs: {} 
-        self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.005, device=self.device)
+        self.validation_metrics = []
+        self.visual_only_validation_metrics = []
+        # self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.01, device=self.device)
+        self.safety_plot_validation = VisualizeSafeSet2D(self.dataset, validation_dict)
+        self.validation_metrics.append(self.safety_plot_validation)
         if self.dataset.dynamics.state_dim <= 5:
-            # Get the name of the dynamics class
+            # Generate ground truth for the validation metrics
             dynamics_class_name = self.dataset.dynamics.__class__.__name__
             dynamics_class = getattr(dynamics_hjr, dynamics_class_name)
             dynamics_params = inspect.signature(dynamics_class).parameters
             dynamics_args = {argname: getattr(self.dataset.dynamics, argname) for argname in dynamics_params 
                              if hasattr(self.dataset.dynamics, argname)}
+            dynamics_args['tMin'] = self.dataset.tMin
+            dynamics_args['tMax'] = self.dataset.tMax
             hj_dyn = dynamics_class(self.dataset.dynamics, **dynamics_args)
             gt = GroundTruthHJSolution(hj_dyn)
-            self.validation_metrics = CompareWithAlternative(self.dataset.dynamics, gt, [], 
-                                                             gt.grid.states.reshape(-1, gt.grid.ndim), gt.times)
-            self.gt_cost_validation = EmpiricalPerformance(self.dataset.dynamics, 0.002, device=self.device, 
-                                                           batch_size=100, fixed_samples=True,
-                                                           fixed_samples_validator=gt)
+            
+            # Visualize 2D safe set for ground truth (for comparison)
+            model_eval_gt = lambda coords: gt.value_from_coords(coords)
+            log_initial = VisualizeSafeSet2D(self.dataset, validation_dict)(model_eval_gt, None)
+            log_initial = {key + '_gt': value for key, value in log_initial.items()}
+            log_initial['step'] = 0
+
+            # Rollout of ground truth (large batch size, so no plotting)
+            converged_values_validator = ValueThresholdEvaluatorandValidator(eval_fn = gt.value_from_coords, v_min=0.0, v_max=1.0)
+            validation_dict['fixed_samples_validator'] = converged_values_validator
+            validation_dict['rollout_batch_size'] = 20000
+            gt_rollout = FixedRolloutTrajectoriesHJR(self.dataset, validation_dict, gt)
+            gt_rollout.vf_times = self.dataset.tMax  # FIXME: Temp
+            gt_rollout.rollout_times = self.dataset.tMax  # FIXME: temp
+            trajectory_log = gt_rollout(model_eval_gt, None)
+            for item, value in trajectory_log.items():
+                if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                    log_initial[item + "_gt"] = value
+
+            # Small rollout of ground truth specifically for plotting
+            validation_dict['rollout_batch_size'] = 20
+            gt_rollout_viz = RolloutTrajectoriesWithVisualsHJR(self.dataset, validation_dict, gt)
+            gt_rollout_viz.vf_times = self.dataset.tMax  # FIXME: Temp
+            gt_rollout_viz.rollout_times = self.dataset.tMax  # FIXME: temp
+            trajectory_viz_log = gt_rollout_viz(model_eval_gt, None)
+            for item, value in trajectory_viz_log.items():
+                if isinstance(value, wandb.Image):
+                    log_initial[item + "_gt"] = value
+            
+            if self.use_wandb:
+                wandb.log(log_initial)
+
+            ########### Validation metrics for all iterations ############    
+            self.validation_metrics.append(VisualizeValueDifference2D(self.dataset, validation_dict, gt))
+            
+            safety_metrics = QuantifyBinarySafetyDifference(self.dataset, validation_dict, gt)
+            safety_metrics.eval_states = j2t(gt.grid.states.reshape(-1, gt.grid.ndim))
+            self.validation_metrics.append(safety_metrics)
+        
+        else:
+            safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
+            self.validation_metrics.append(safety_metrics)
+
+        standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.sdf, v_min=0.0, v_max=2.0)
+        validation_dict['fixed_samples_validator'] = standard_value_validator
+        validation_dict['rollout_batch_size'] = 20000
+        traj_rollout = FixedRolloutTrajectories(self.dataset, validation_dict)
+
+        validation_dict['fixed_samples_validator'] = standard_value_validator
+        validation_dict['rollout_batch_size'] = 20
+        traj_rollout_viz = RolloutTrajectoriesWithVisuals(self.dataset, validation_dict)
+
+        if self.dataset.dynamics.state_dim <= 5:
+            traj_rollout.sampling_states = gt_rollout.sampling_states
+            traj_rollout_viz.sampling_states = gt_rollout_viz.sampling_states
+
+        self.validation_metrics.append(traj_rollout)
+        self.visual_only_validation_metrics.append(traj_rollout_viz)
+
+
 
     @abstractmethod
     def init_special(self):
@@ -65,145 +126,40 @@ class Experiment(ABC):
         was_training = self.model.training
         self.model.eval()
         self.model.requires_grad_(False)
-
-        plot_config = self.dataset.dynamics.plot_config()
-
-        state_test_range = self.dataset.dynamics.state_test_range()
-        x_min, x_max = state_test_range[plot_config['x_axis_idx']]
-        y_min, y_max = state_test_range[plot_config['y_axis_idx']]
-        if isinstance(plot_config['z_axis_idx'], list):
-            z_min, z_max = list(map(list, zip(*[state_test_range[z_idx] for z_idx in plot_config['z_axis_idx']])))
-            for plot_idx, z_idx in enumerate(plot_config['z_axis_idx']):
-                if (hasattr(plot_config, 'angle_dims') and 
-                    z_idx in plot_config['angle_dims'] and
-                    math.isclose(z_max[plot_idx] - z_min[plot_idx], 2.*math.pi, rel_tol=1e-2)):
-                    z_max[plot_idx] = z_max[plot_idx] - (z_max[plot_idx] - z_min[plot_idx]) / (z_resolution + 1) 
-                else:
-                    z_min[plot_idx], z_max[plot_idx] = state_test_range[z_idx]
-        else:
-            z_min, z_max = state_test_range[plot_config['z_axis_idx']]
-
-        times = torch.linspace(0, self.dataset.tMax, time_resolution)
-        xs = torch.linspace(x_min, x_max, x_resolution)
-        ys = torch.linspace(y_min, y_max, y_resolution)
-        if isinstance(plot_config['z_axis_idx'], list):
-            zs = [torch.linspace(z_min[i], z_max[i], z_resolution) for i in range(len(plot_config['z_axis_idx']))]
-            zs = torch.cartesian_prod(*zs)
-        else:
-            zs = torch.linspace(z_min, z_max, z_resolution)
-        xys = torch.cartesian_prod(xs, ys)
         
-        fig = plt.figure(figsize=(6*len(zs), 5*len(times)))
-        gs = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
-        if hasattr(self.validation_metrics, 'include_plot'):
-            fig2 = plt.figure(figsize=(6*len(zs), 5*len(times)))
-            gs2 = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
-            fig3 = plt.figure(figsize=(6*len(zs), 5*len(times)))
-            gs3 = matplotlib.gridspec.GridSpec(len(times), len(zs) + 1, width_ratios=[1] * len(zs) + [0.1], wspace=0.2, hspace=0.2)
-        for i in range(len(times)):
-            for j in range(len(zs)):
-                coords = torch.zeros(x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
-                coords[:, 0] = times[i]
-                coords[:, 1:] = torch.tensor(plot_config['state_slices'])
-                coords[:, 1 + plot_config['x_axis_idx']] = xys[:, 0]
-                coords[:, 1 + plot_config['y_axis_idx']] = xys[:, 1]
-                if isinstance(plot_config['z_axis_idx'], list):
-                    for k, z_idx in enumerate(plot_config['z_axis_idx']):
-                        coords[:, 1 + z_idx] = zs[j][k]
-                else:
-                    coords[:, 1 + plot_config['z_axis_idx']] = zs[j]
+        def model_eval(coords):
+            results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.to(self.device))})
+            vals = self.dataset.dynamics.io_to_value(results['model_in'], results['model_out'].squeeze(dim=-1).detach())
+            return vals.detach()
+        
+        def model_eval_grad(coords):
+            self.model.requires_grad_(True)
+            results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.to(self.device))})
+            vals = self.dataset.dynamics.io_to_dv(results['model_in'], results['model_out'].squeeze(dim=-1)).detach()
+            self.model.requires_grad_(False)
+            return vals
+        
+        learned_model_eval = model_eval
+        wandb_log = {'step': epoch}
 
-                with torch.no_grad():
-                    model_results = self.model({'coords': self.dataset.dynamics.coord_to_input(coords.to(self.device))})
-                    if hasattr(self.validation_metrics, 'include_plot'):
-                        values_validation = self.validation_metrics.get_comparison_plot_data(coords.to(self.device))
-                    values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(), model_results['model_out'].squeeze(dim=-1).detach())
-
-                    sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(self.device))
-
-                # ax = fig.add_subplot(len(times), len(zs), (j+1) + i*len(zs))
-                ax = fig.add_subplot(gs[i, j])
-
-                if isinstance(plot_config['z_axis_idx'], list):
-                    ax_title = 't = %0.2f, %s' % (
-                        times[i],
-                        ', '.join(['%s = %0.2f' % (plot_config['state_labels'][z_idx], zs[j][k].item()) 
-                                   for k, z_idx in enumerate(plot_config['z_axis_idx'])])
-                    )
-                else:
-                    ax_title = 't = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], zs[j])
-                s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
-                # Go from xs to (-1, 1) and ys to (-1, 1)
-                xs_plot = np.linspace(-1, 1, x_resolution)
-                ys_plot = np.linspace(-1, 1, y_resolution)
-                ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
-                ax.set_title(ax_title)
-                if hasattr(self.validation_metrics, 'include_plot'):
-                    ax2 = fig2.add_subplot(gs2[i, j])
-                    ax2.imshow(1*(values_validation.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
-                    ax2.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
-                    ax2.set_title(ax_title)
-                    ax3 = fig3.add_subplot(gs3[i, j])
-                    difference = values_validation - values
-                    s3 = ax3.contourf(xs_plot, ys_plot, difference.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=10, vmin=-0.2, vmax=0.2)
-                    ax3.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
-                    ax3.set_title(ax_title)
-
-                # fig.colorbar(s) 
-            cax = fig.add_subplot(gs[i, -1])
-            fig.colorbar(s, cax=cax, orientation='vertical')#, shrink=0.5, aspect=20)
-            if hasattr(self.validation_metrics, 'include_plot'):
-                cax2 = fig2.add_subplot(gs2[i, -1])
-                fig2.colorbar(s, cax=cax2, orientation='vertical')
-                cax3 = fig3.add_subplot(gs3[i, -1])
-                fig3.colorbar(s3, cax=cax3, orientation='vertical')
-                # give the fig a title
-                fig3.suptitle("Ground Truth - Model")
-        fig.tight_layout()
-        if save_path.endswith('.png'):
-            fig.savefig(save_path)
-        else:
-            fig.savefig(os.path.join(save_path, 'validation.png'))
-            fig3.savefig(os.path.join(save_path, 'validation_diff.png'))
-            return # FIXME: Currently to force being in test mode
-
-        # Add possible progress evaluation metrics here
-        wandb_log = self.validation_metrics(self.model, add_temporal_data=True)
-        curr_t = self.dataset.tMin + (self.dataset.tMax - self.dataset.tMin) * self.dataset.counter / self.dataset.counter_end
-        added_log = self.emperical_cost_validation_metric(self.model, vf_times=[max(0, curr_t - 0.1), curr_t])
-        for key, value in added_log.items():
-            if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                wandb_log[key] = value
-        if hasattr(self, 'gt_cost_validation'):
-            another_log = self.gt_cost_validation(self.model, vf_times=max(0.0, curr_t - 0.1), rollout_times=self.dataset.tMax)
-            for key, value in another_log.items():
+        if not isinstance(self.validation_metrics, list):
+            self.validation_metrics = [self.validation_metrics]
+        for validation_metric in self.validation_metrics:
+            validation_metric.update_counters()
+            log = validation_metric(learned_model_eval, model_eval_grad)
+            for key, value in log.items():
                 if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                    mod_key = 'gt_' + key
-                    wandb_log[mod_key] = value
-            fig4, ax = plt.subplots()
-            ax.plot(another_log['trajectories'][:, :, 0].T, another_log['trajectories'][:, :, 1].T)
-            ax.plot(another_log['trajectories'][:,:1, 0].T, another_log['trajectories'][:,:1, 1].T, '*')
-            ground_truth = self.validation_metrics.alt_method
-            ax.contourf(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[-1][:,:,25,25].T)
-            ax.contour(ground_truth.grid.coordinate_vectors[0], ground_truth.grid.coordinate_vectors[1], ground_truth.value_functions[0][:,:,25,25].T, levels=[0], colors='k')
-            ax.set_xlim([ground_truth.grid.coordinate_vectors[0][0], ground_truth.grid.coordinate_vectors[0][-1]])
-            ax.set_ylim([ground_truth.grid.coordinate_vectors[1][0], ground_truth.grid.coordinate_vectors[1][-1]])
-            wandb_log['rollouts_plot'] = wandb.Image(fig4)
-            fig5, ax = plt.subplots()
-            ax.plot(another_log['values_over_trajs'][::10].T)
-            ax.plot(torch.zeros_like(another_log['values_over_trajs'][0]), 'k--')
-            ax.set_ylim([-1, 1])
-            wandb_log['rollouts_values_plot'] = wandb.Image(fig5)
-            fig6, ax = plt.subplots()
-            ax.plot(another_log['cost_over_trajs'][::10].T)
-            ax.plot(torch.zeros_like(another_log['cost_over_trajs'][0]), 'k--')
-            ax.set_ylim([-1, 1])
-            wandb_log['rollouts_costs_plot'] = wandb.Image(fig6)
-        wandb_log['step'] = epoch
-        wandb_log['val_plot'] = wandb.Image(fig)
-        if hasattr(self.validation_metrics, 'include_plot'):
-            wandb_log['val_plot_gt'] = wandb.Image(fig2)
-            wandb_log['val_plot_diff'] = wandb.Image(fig3)
+                    wandb_log[key] = value
+                elif isinstance(value, wandb.Image):
+                    wandb_log[key] = value
+        
+        for validation_metric in self.visual_only_validation_metrics:
+            validation_metric.update_counters()
+            log = validation_metric(learned_model_eval, model_eval_grad)
+            for key, value in log.items():
+                if isinstance(value, wandb.Image):
+                    wandb_log[key] = value
+
         if self.use_wandb:
             wandb.log(wandb_log)
         plt.close()
