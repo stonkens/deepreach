@@ -55,10 +55,13 @@ class Dynamics(ABC):
     # convert model io to real value
     def io_to_value(self, input, output):
         if self.deepreach_model=="diff":
+            # V(s,t) = boundary_fn(s) + NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * self.value_var / self.value_normto) + self.boundary_fn(self.input_to_coord(input)[..., 1:])
         elif self.deepreach_model=="exact":
+            # V(s,t) = boundary_fn(s) + t * NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * input[..., 0] * self.value_var / self.value_normto) + self.boundary_fn(self.input_to_coord(input)[..., 1:])
         else:
+            # V(s,t) = NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * self.value_var / self.value_normto) + self.value_mean
 
     # convert model io to real dv
@@ -66,6 +69,9 @@ class Dynamics(ABC):
         dodi = diff_operators.jacobian(output.unsqueeze(dim=-1), input)[0].squeeze(dim=-2)
 
         if self.deepreach_model=="diff":
+            # \partial V/\partial t = autograd(NN(s,t)) for t
+            # \partial V/\partial s = autograd(NN(s,t)) for s + \partial boundary_fn(s) / \partial s
+            # (Include /self.state_var division for normalization for dvdx_term1)
             dvdt = (self.value_var / self.value_normto) * dodi[..., 0]
 
             dvds_term1 = (self.value_var / self.value_normto / self.state_var.to(device=dodi.device)) * dodi[..., 1:]
@@ -73,9 +79,11 @@ class Dynamics(ABC):
             dvds_term2 = diff_operators.jacobian(self.boundary_fn(state).unsqueeze(dim=-1), state)[0].squeeze(dim=-2)
             dvds = dvds_term1 + dvds_term2
         elif self.deepreach_model=="exact":
+            # \partial V/\partial t = NN(s,t) + t * autograd(NN(s,t)) for t (output = NN(s,t))
             dvdt = (self.value_var / self.value_normto) * \
                 (input[..., 0]*dodi[..., 0] + output)
 
+            # \partial V/\partial s = t * autograd(NN(s,t)) for s + \partial boundary_fn(s) / \partial s
             dvds_term1 = (self.value_var / self.value_normto /
                           self.state_var.to(device=dodi.device)) * dodi[..., 1:] * input[..., 0].unsqueeze(-1)
             state = self.input_to_coord(input)[..., 1:]
@@ -83,6 +91,8 @@ class Dynamics(ABC):
                 state).unsqueeze(dim=-1), state)[0].squeeze(dim=-2)
             dvds = dvds_term1 + dvds_term2
         else:
+            # \partial V/\partial t = NN(s,t) for t
+            # \partial V/\partial s = NN(s,t) for s
             dvdt = (self.value_var / self.value_normto) * dodi[..., 0]
             dvds = (self.value_var / self.value_normto / self.state_var.to(device=dodi.device)) * dodi[..., 1:]
         
@@ -303,8 +313,6 @@ class Dubins3D(Dynamics):
     # \dot y    = v \sin \theta
     # \dot \theta = u
     def dsdt(self, state, control, disturbance):
-        if self.freeze_model:
-            raise NotImplementedError
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = self.velocity*torch.cos(state[..., 2])
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 2])
@@ -332,6 +340,7 @@ class Dubins3D(Dynamics):
         if self.set_mode == 'reach':
             return (-self.omega_max*torch.sign(dvds[..., 2]))[..., None]
         elif self.set_mode == 'avoid':
+            # return torch.where(dvds[..., 2] >= 0, self.omega_max, -self.omega_max)
             return (self.omega_max*torch.sign(dvds[..., 2]))[..., None]
 
     def optimal_disturbance(self, state, dvds):
@@ -525,17 +534,17 @@ class Quad2DAttitude(Dynamics):
         self.max_pos_dist = max_pos_dist
         self.max_vel_dist = max_vel_dist
         from utils import boundary_functions
-        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.5, 0.0, -2.0, -2.0]), 
-                                                     torch.Tensor([4.5, 2.5, 2.0, 2.0]))
+        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
         circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
-        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([-1.0, 1.5]))
+        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
         self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
         super().__init__(
             loss_type='brt_hjivi', set_mode=set_mode,
             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
             state_mean=[0., 1.3, 0, 0],
             state_var=[5., 1.5, 2, 2],
-            value_mean=0.2,
+            value_mean=0.0,
             value_var=0.5,
             value_normto=0.02,
             deepreach_model="exact"
@@ -545,8 +554,8 @@ class Quad2DAttitude(Dynamics):
         return [
             [-5, 5], 
             [-0.2, 2.8],
-            [-1.5, 1.5],
-            [-1.5, 1.5]
+            [-1.4, 1.4],
+            [-1.4, 1.4]
         ]
     
     def equivalent_wrapped_state(self, state):
