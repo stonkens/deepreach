@@ -587,38 +587,38 @@ class Quad2DAttitude(Dynamics):
     
     def optimal_control(self, state, dvds):
         if self.set_mode == "avoid":
-            a1 = torch.sign(dvds[..., 2]) * self.max_angle
-            a2 = self.min_thrust + torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
-            # a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
-            # a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
+            # a1 = torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.min_thrust + torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
         elif self.set_mode == "reach":
-            a1 = -torch.sign(dvds[..., 2]) * self.max_angle
-            a2 = self.max_thrust - torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
-            # a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
-            # a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
+            # a1 = -torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.max_thrust - torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
         else:
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
         return torch.cat((a1[..., None], a2[..., None]), dim=-1)
 
     def optimal_disturbance(self, state, dvds):
         if self.set_mode == "avoid":
-            d1 = -torch.sign(dvds[..., 0]) * self.max_pos_dist
-            d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
-            d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
-            d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
-            # d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
-            # d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
-            # d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
-            # d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
+            # d1 = -torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
         elif self.set_mode == "reach":
-            d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
-            d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
-            d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
-            d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
-            # d1 = torch.where(dvds[..., 0] < 0, -self.max_pos_dist, self.max_pos_dist)
-            # d2 = torch.where(dvds[..., 1] < 0, -self.max_pos_dist, self.max_pos_dist)
-            # d3 = torch.where(dvds[..., 2] < 0, -self.max_vel_dist, self.max_vel_dist)
-            # d4 = torch.where(dvds[..., 3] < 0, -self.max_vel_dist, self.max_vel_dist)
+            # d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] < 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] < 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] < 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] < 0, -self.max_vel_dist, self.max_vel_dist)
         else:
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
         return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
