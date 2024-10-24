@@ -544,7 +544,7 @@ class Quad2DAttitude(Dynamics):
             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
             state_mean=[0., 1.3, 0, 0],
             state_var=[5., 1.5, 2, 2],
-            value_mean=0.0,
+            value_mean=0.2,
             value_var=0.5,
             value_normto=0.02,
             deepreach_model="exact"
