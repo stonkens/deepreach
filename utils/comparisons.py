@@ -18,7 +18,8 @@ class GroundTruthHJSolution:
         
         grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
         self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution)
-        sdf_values = t2j(self.hj_dynamics.torch_dynamics.sdf(j2t(self.grid.states)))
+        # sdf_values = t2j(self.hj_dynamics.torch_dynamics.sdf(j2t(self.grid.states)))
+        sdf_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
         backwards_reachable_tube = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
         solver_settings = hj.SolverSettings.with_accuracy("very_high", 
                                                           value_postprocessor=backwards_reachable_tube(sdf_values))

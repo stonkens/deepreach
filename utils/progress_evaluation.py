@@ -372,6 +372,8 @@ class RolloutTrajectories(EvaluationMetric):
         sample_states = torch.zeros(self.batch_size, self.dynamics.state_dim)
 
         num_scenarios = 0
+        max_counter = self.batch_size * 50
+        counter = 0 
         while num_scenarios < self.batch_size:
             candidate_sample_times = (torch.ceil((torch.rand((num_samples)) * (times_hi - times_lo) + times_lo) / self.dt) * self.dt).to(self.device)
             candidate_sample_states = self.dynamics.equivalent_wrapped_state(self.sample_generator.sample(num_samples)).to(self.device)
@@ -387,7 +389,12 @@ class RolloutTrajectories(EvaluationMetric):
             sample_times[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_times[valid_candidate_idis]
             sample_states[num_scenarios:num_scenarios + num_valid_idis] = candidate_sample_states[valid_candidate_idis]
             num_scenarios += num_valid_idis
+            counter += 1
         
+            if counter > max_counter: 
+                print(f"Could not find enough valid samples after {max_counter} iterations")
+                break 
+
         return sample_times, sample_states
 
     def get_optimal_trajectory(self, curr_coords, model_eval_grad):

@@ -101,7 +101,7 @@ class Experiment(ABC):
             safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
             self.validation_metrics.append(safety_metrics)
 
-        standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.sdf, v_min=0.0, v_max=2.0)
+        standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.boundary_fn, v_min=0.0, v_max=2.0)
         validation_dict['fixed_samples_validator'] = standard_value_validator
         validation_dict['rollout_batch_size'] = 20000
         traj_rollout = FixedRolloutTrajectories(self.dataset, validation_dict)
