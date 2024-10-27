@@ -1384,6 +1384,177 @@ class MultiVehicleCollision(Dynamics):
 
 
 
+#################### Nikhil: Additional Dynamics ####################
+
+class Drone4D(Dynamics): 
+
+    def __init__(self, gravity: float, min_angle: float, max_angle: float, min_thrust: float, max_thrust: float, 
+                max_pos_y_dist: float, max_pos_z_dist: float, max_vel_y_dist: float, max_vel_z_dist: float): 
+
+        # Input bounds
+        self.u1_min = min_angle # default -math.pi/8
+        self.u1_max = max_angle # default math.pi/8
+        self.u2_min = min_thrust # default 5
+        self.u2_max = max_thrust # default 13
+
+        # Disturbance bounds 
+        self.d1_max = max_pos_y_dist # default 0
+        self.d2_max = max_pos_z_dist # default 0
+        self.d3_max = max_vel_y_dist # default 0
+        self.d4_max = max_vel_z_dist # default 0
+
+        # Boundaries 
+        from utils import boundary_functions
+        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+        self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+
+        # Constants
+        self.gravity = gravity # default 9.81
+
+        super().__init__(
+            loss_type='brt_hjivi', set_mode=set_mode,
+            state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
+            state_mean=[0., 1.3, 0, 0], # NOTE: might want to change
+            state_var=[5., 1.5, 2, 2],  # NOTE: might want to change
+            value_mean=0.2,             # NOTE: might want to change
+            value_var=0.5,              # NOTE: might want to change
+            value_normto=0.02,          # NOTE: might want to change
+            deepreach_model="vanilla" # NOTE: Was "exact" before, "vanilla" worked better on the attitude model with these boundary functions 
+        )
+
+
+    def state_test_range(self):
+        return [
+            [-5, 5], 
+            [-0.2, 2.8],
+            [-1.4, 1.4],
+            [-1.4, 1.4]
+        ]
+
+    def equivalent_wrapped_state(self, state):
+        wrapped_state = torch.clone(state) # no wrapping needed
+        return wrapped_state
+    
+    # Drone 4D dynamics 
+    # \dot y = vy + d1
+    # \dot z = vz + d2
+    # \dot vy = u2 sin(u1) + d3
+    # \dot vz = u2 cos(u1) - g + d4
+    # state = [y, z, vy, vz]
+    def dsdt(self, state, control, disturbance):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
+        dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
+        dsdt[..., 2] = control[..., 1]*torch.sin(control[..., 0]) + disturbance[..., 2]
+        dsdt[..., 3] = control[..., 1]*torch.cos(control[..., 0]) - self.gravity + disturbance[..., 3]
+        return dsdt
+    
+    def boundary_fn(self, state):
+        # safety related bounds 
+        return self.sdf(state) 
+    
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, dvds):
+        # Compute the hamiltonian for the drone
+        # args: state (tensor), dvds (tensor) - derivative of value function wrt state
+        # TODO
+        p1 = dvds[..., 0]
+        p2 = dvds[..., 1]
+        p3 = dvds[..., 2]
+        p4 = dvds[..., 3]
+
+        device = p3.device
+
+        u1, u2 = self.optimal_control(state, dvds)
+        d1, d2, d3, d4 = self.optimal_disturbance(state, dvds)
+
+        # Compute the Hamiltonian 
+        y = state[..., 0]
+        z = state[..., 1]
+        vy = state[..., 2]
+        vz = state[..., 3]
+
+        ham = (p1 * vy) + (p2 * vz) - (p4 * self.gravity) + \
+              (p1 * d1) + (p2 * d2) + (p3 * d3) + (p4 * d4) + \
+              (p3 * u2 * torch.sin(u1)) + (p4 * u2 * torch.cos(u1))
+
+        return ham
+    
+    def optimal_control(self, state, dvds):
+        p3 = dvds[..., 2]
+        p4 = dvds[..., 3]
+
+        device = p3.device
+
+        u1 = torch.ones(p3.shape, device=device) 
+        u2 = torch.ones(p4.shape, device=device) 
+
+        # First: Maximize with u1 and u2 
+        # Go through cases 
+        arctan_p3p4 = torch.atan(p3/(p4 + torch.tensor(torch.finfo(torch.float).eps, device=device)))
+
+        # Case 1: p3 > 0, p4 > 0 
+        u1[torch.where(torch.logical_and(p3 > 0, p4 > 0))] = torch.min(arctan_p3p4[torch.where(torch.logical_and(p3 > 0, p4 > 0))], torch.tensor(self.u1_max, device=device))
+
+        # Case 2: p3  > 0, p4 < 0
+        u1[torch.where(torch.logical_and(p3 > 0, p4 < 0))] = torch.tensor(self.u1_max, device=device)
+
+        # Case 3: p3 < 0, p4 > 0
+        u1[torch.where(torch.logical_and(p3 < 0, p4 > 0))] = torch.max(arctan_p3p4[torch.where(torch.logical_and(p3 < 0, p4 > 0))], torch.tensor(self.u1_min, device=device))
+
+        # Case 4: p3 < 0, p4 < 0
+        u1[torch.where(torch.logical_and(p3 < 0, p4 < 0))] = torch.tensor(self.u1_min, device=device)
+
+        # u2: select u2 max if g(u1) > 0 else select u2 min
+        g_u1 = p3*torch.sin(u1) + p4*torch.cos(u1)
+        u2 = u2 * self.u2_max
+        u2[torch.where(g_u1 < 0)] = self.u2_min
+
+        opt_control = torch.cat((u1[..., None], u2[..., None]), dim=-1)
+        return opt_control 
+
+    
+    def optimal_disturbance(self, state, dvds):
+        p1 = dvds[..., 0]
+        p2 = dvds[..., 1]
+        p3 = dvds[..., 2]
+        p4 = dvds[..., 3]
+
+        # Second: Minimize with d1, d2, d3, d4
+        d1 = torch.ones(p1.shape) * self.d1_min
+        d2 = torch.ones(p2.shape) * self.d2_min
+        d3 = torch.ones(p3.shape) * self.d3_min
+        d4 = torch.ones(p4.shape) * self.d4_min
+
+        # If pi < 0 then di = di_min else di_max
+        d1[torch.where(p1 < 0)] = self.d1_max
+        d2[torch.where(p2 < 0)] = self.d2_max   
+        d3[torch.where(p3 < 0)] = self.d3_max
+        d4[torch.where(p4 < 0)] = self.d4_max
+
+        opt_disturbance = torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
+        return opt_disturbance 
+    
+    def plot_config(self):
+        # NOTE: might be incorrect
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['y', 'z', r'$v_y$', r'$v_z$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+
+
+
 if __name__ == "__main__":
     dynamics = Quad2DAttitude(9.81, 0.75, 5.0, 15.0, 0.0, 0.0, 'avoid')
     sample = torch.rand((65000, 4)) * 2 - 1
