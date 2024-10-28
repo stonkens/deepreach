@@ -601,7 +601,7 @@ class RolloutTrajectoriesHJR(RolloutTrajectories):
         # Get gradient values
         grad_values = self.ground_truth.get_values_gradient(curr_coords[:, 1:], curr_coords[:, 0])
         # Get optimal control and disturbance
-        control, disturbance = self.ground_truth.hj_dynamics.optimal_control_and_disturbance(curr_coords[:, 1:], curr_coords[:, 0], grad_values)
+        control, disturbance = self.ground_truth.optimal_control_and_disturbance_f(curr_coords[:, 1:], curr_coords[:, 0], grad_values)
         # Forward simulate
         next_states = curr_coords[:,1:] + self.dt * self.ground_truth.dsdt_f(curr_coords[:, 1:], control, disturbance, curr_coords[:, 0])
         # if self.hj_dynamics.periodic_dims is not None:

@@ -29,6 +29,7 @@ class GroundTruthHJSolution:
                                         sdf_values, progress_bar=True)
         self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
         self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0) * self.grid.ndim)
+        self.optimal_control_and_disturbance_f = jax.vmap(self.hj_dynamics.optimal_control_and_disturbance, in_axes=(0, 0, 0))
         
     def __call__(self, state, time):
         # Find nearest time
