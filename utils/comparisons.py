@@ -10,14 +10,16 @@ class GroundTruthHJSolution:
         import hj_reachability as hj
         import jax.numpy as jnp
         self.hj_dynamics = hj_dynamics
-        state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy())
-        state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy())
+        state_mean = np.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy())
+        state_var = np.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy())
+        for periodic_dim in self.hj_dynamics.periodic_dims:
+            state_var[periodic_dim] = np.pi  # Deepreach dynamics might add overlap, ground truth should have pi
         state_hi = state_mean + state_var
         state_lo = state_mean - state_var
         state_domain = hj.sets.Box(lo=state_lo, hi=state_hi)
         
         grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
-        self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution)
+        self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution, periodic_dims=self.hj_dynamics.periodic_dims)
         sdf_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
         backwards_reachable_tube = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
         solver_settings = hj.SolverSettings.with_accuracy("very_high", 
@@ -36,7 +38,6 @@ class GroundTruthHJSolution:
         def single_compute(state, time):
             time_idx = jnp.argmin(jnp.abs(jnp.abs(self.times) - jnp.abs(time)))
             return self.grid.interpolate(self.value_functions[time_idx], state)
-        print(time)
         vectorized_compute = jax.vmap(single_compute, in_axes=(0, 0))
         return vectorized_compute(state, time)
     

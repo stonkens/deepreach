@@ -13,6 +13,7 @@ class Dynamics(ABC):
     loss_type:str, set_mode:str, 
     state_dim:int, input_dim:int, 
     control_dim:int, disturbance_dim:int, 
+    periodic_dims:list,
     state_mean:list, state_var:list, 
     value_mean:float, value_var:float, value_normto:float, 
     deepreach_model:str):
@@ -22,6 +23,13 @@ class Dynamics(ABC):
         self.input_dim = input_dim
         self.control_dim = control_dim
         self.disturbance_dim = disturbance_dim
+        self.periodic_dims = periodic_dims
+        if self.periodic_dims is None:
+            self.periodic_dims = []
+        elif isinstance(self.periodic_dims, int):
+            self.periodic_dims = [self.periodic_dims]
+        assert isinstance(self.periodic_dims, list), 'periodic_dims must be a list'
+
         self.state_mean = torch.tensor(state_mean) 
         self.state_var = torch.tensor(state_var)
         self.state_bounds = torch.stack([self.state_mean - self.state_var, self.state_mean + self.state_var], dim=-1)
@@ -104,9 +112,11 @@ class Dynamics(ABC):
     def state_test_range(self):
         raise NotImplementedError
 
-    @abstractmethod
     def equivalent_wrapped_state(self, state):
-        raise NotImplementedError
+        wrapped_state = torch.clone(state)
+        for periodic_dim in self.periodic_dims:
+            wrapped_state[..., periodic_dim] = (wrapped_state[..., periodic_dim] + math.pi) % (2*math.pi) - math.pi
+        return wrapped_state 
 
     @abstractmethod
     def dsdt(self, state, control, disturbance):
@@ -150,6 +160,7 @@ class ParameterizedVertDrone2D(Dynamics):
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=0,
             state_mean=[0, 1.5, self.input_multiplier_max/2], # v, z, k
             state_var=[4, 2, self.input_multiplier_max/2],    # v, z, k
+            periodic_dims=[],
             value_mean=0.25,
             value_var=0.5,
             value_normto=0.02,
@@ -162,10 +173,6 @@ class ParameterizedVertDrone2D(Dynamics):
             [-0.5, 3.5],                    # z
             [0, self.input_multiplier_max], # k
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        return wrapped_state
 
     # ParameterizedVertDrone2D dynamics
     # \dot v = k*u - g
@@ -207,7 +214,7 @@ class ParameterizedVertDrone2D(Dynamics):
             'z_axis_idx': 2,
         }
 
-class Air3D(Dynamics):
+class SimpleAir3D(Dynamics):
     def __init__(self, collisionR:float, velocity:float, omega_max:float, angle_alpha_factor:float):
         self.collisionR = collisionR
         self.velocity = velocity
@@ -218,6 +225,7 @@ class Air3D(Dynamics):
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=1,
             state_mean=[0, 0, 0], 
             state_var=[1, 1, self.angle_alpha_factor*math.pi],
+            periodic_dims=[2],
             value_mean=0.25, 
             value_var=0.5, 
             value_normto=0.02,
@@ -230,11 +238,6 @@ class Air3D(Dynamics):
             [-1, 1],
             [-math.pi, math.pi],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
 
     # Air3D dynamics
     # \dot x    = -v + v \cos \psi + u y
@@ -290,6 +293,7 @@ class Dubins3D(Dynamics):
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=0,
             state_mean=[0, 0, 0], 
             state_var=[1, 1, self.angle_alpha_factor*math.pi],
+            periodic_dims=[2],
             value_mean=0.25, 
             value_var=0.5, 
             value_normto=0.02,
@@ -302,11 +306,6 @@ class Dubins3D(Dynamics):
             [-1, 1],
             [-math.pi, math.pi],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
         
     # Dubins3D dynamics
     # \dot x    = v \cos \theta
@@ -370,6 +369,7 @@ class Dubins3DParameterizedDisturbance(Dynamics):
             state_dim=4, input_dim=5, control_dim=1, disturbance_dim=1,
             state_mean=[0, 0, 0, self.max_disturbance/2], 
             state_var=[1, 1, self.angle_alpha_factor*math.pi, self.max_disturbance/2],
+            periodic_dims=[2],
             value_mean=0.25, 
             value_var=0.5, 
             value_normto=0.02,
@@ -383,11 +383,6 @@ class Dubins3DParameterizedDisturbance(Dynamics):
             [-math.pi, math.pi],
             [0, self.max_disturbance],  # disturbance term
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
         
     # Dubins3D dynamics
     # \dot x    = v \cos \theta
@@ -470,6 +465,7 @@ class Dubins4D(Dynamics):
             state_dim=14, input_dim=15,  control_dim=2, disturbance_dim=0,
             state_mean=[xMean, yMean, thetaMean, vMean, xMean, yMean, aMean, aMean, oMean, oMean, aMean, aMean, oMean, oMean],
             state_var=[xVar, yVar, thetaVar, vVar, xVar, yVar, aVar, aVar, oVar, oVar, aVar, aVar, oVar, oVar],
+            periodic_dims=[2],
             value_mean=13,
             value_var=14,
             value_normto=0.02,
@@ -493,11 +489,6 @@ class Dubins4D(Dynamics):
             [-1, 1],
             [-1, 1],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
 
     def boundary_fn(self, state):
         return torch.norm(state[..., 0:2] - state[..., 4:6], dim=-1) - self.collisionR
@@ -544,6 +535,7 @@ class Quad2DAttitude(Dynamics):
             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
             state_mean=[0., 1.3, 0, 0],
             state_var=[5., 1.5, 2, 2],
+            periodic_dims=[],
             value_mean=0.2,
             value_var=0.5,
             value_normto=0.02,
@@ -557,10 +549,6 @@ class Quad2DAttitude(Dynamics):
             [-1.4, 1.4],
             [-1.4, 1.4]
         ]
-    
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        return wrapped_state
     
     def dsdt(self, state, control, disturbance):
         dsdt = torch.zeros_like(state)
@@ -675,6 +663,7 @@ class NarrowPassage(Dynamics):
                 8.0, 3.8, 1.2*math.pi, 4.0, 1.2*0.3*math.pi, 
                 8.0, 3.8, 1.2*math.pi, 4.0, 1.2*0.3*math.pi,
             ],
+            periodic_dims=[2, 4, 7, 9],
             value_mean=0.25*8.0,
             value_var=0.5*8.0,
             value_normto=0.02,
@@ -694,14 +683,6 @@ class NarrowPassage(Dynamics):
             [-1, 7],
             [-0.3*math.pi, 0.3*math.pi],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 4] = (wrapped_state[..., 4] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 7] = (wrapped_state[..., 7] + math.pi) % (2*math.pi) - math.pi 
-        wrapped_state[..., 9] = (wrapped_state[..., 9] + math.pi) % (2*math.pi) - math.pi 
-        return wrapped_state 
 
     # NarrowPassage dynamics
     # \dot x   = v * cos(th)
@@ -841,6 +822,7 @@ class ReachAvoidRocketLanding(Dynamics):
             state_dim=6, input_dim=7, control_dim=2, disturbance_dim=0,
             state_mean=[0.0, 80.0, 0.0, 0.0, 0.0, 0.0],
             state_var=[150.0, 70.0, 1.2*math.pi, 200.0, 200.0, 10.0],
+            periodic_dims=[2],
             value_mean=0.0,
             value_var=1.0,
             value_normto=0.02,
@@ -856,11 +838,6 @@ class ReachAvoidRocketLanding(Dynamics):
             [-200, 200],
             [-10, 10],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state 
 
     # \dot x = v_x
     # \dot y = v_y
@@ -962,6 +939,7 @@ class RocketLanding(Dynamics):
             state_dim=6, input_dim=8, control_dim=2, disturbance_dim=0,
             state_mean=[0.0, 80.0, 0.0, 0.0, 0.0, 0.0],
             state_var=[150.0, 70.0, 1.2*math.pi, 200.0, 200.0, 10.0],
+            periodic_dims=[2],
             value_mean=0.0,
             value_var=1.0,
             value_normto=0.02,
@@ -1017,11 +995,6 @@ class RocketLanding(Dynamics):
             [-200, 200],
             [-10, 10],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state 
 
     # \dot x = v_x
     # \dot y = v_y
@@ -1109,6 +1082,7 @@ class Quadrotor(Dynamics):
             state_dim=13, input_dim=14, control_dim=4, disturbance_dim=0,
             state_mean=[0 for i in range(13)], 
             state_var=[1.5, 1.5, 1.5, 1, 1, 1, 1, 10, 10 ,10 ,10 ,10 ,10],
+            periodic_dims=[],
             value_mean=(math.sqrt(1.5**2+1.5**2+1.5**2)-2*self.collisionR)/2, 
             value_var=math.sqrt(1.5**2+1.5**2+1.5**2), 
             value_normto=0.02,
@@ -1131,10 +1105,6 @@ class Quadrotor(Dynamics):
             [-10, 10],
             [-10, 10],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        return wrapped_state
 
     # Dubins3D dynamics
     # \dot x    = v \cos \theta
@@ -1279,6 +1249,7 @@ class MultiVehicleCollision(Dynamics):
         super().__init__(
             loss_type='brt_hjivi', set_mode='avoid',
             state_dim=9, input_dim=10, control_dim=3, disturbance_dim=0,
+            periodic_dims=[6, 7, 8],
             state_mean=[
                 0, 0,
                 0, 0, 
@@ -1304,13 +1275,6 @@ class MultiVehicleCollision(Dynamics):
             [-1, 1], [-1, 1],
             [-math.pi, math.pi], [-math.pi, math.pi], [-math.pi, math.pi],           
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 6] = (wrapped_state[..., 6] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 7] = (wrapped_state[..., 7] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 8] = (wrapped_state[..., 8] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
         
     # dynamics (per car)
     # \dot x    = v \cos \theta

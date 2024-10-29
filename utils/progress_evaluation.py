@@ -5,6 +5,7 @@ from utils.error_evaluators import SliceSampleGenerator, ValueThresholdValidator
 import math
 import wandb
 from abc import ABC, abstractmethod
+from tqdm.autonotebook import tqdm
 
 
 class EvaluationMetric(ABC):
@@ -76,14 +77,17 @@ class VisualizeSafeSet2D(EvaluationMetric):
         if isinstance(plot_config['z_axis_idx'], list):
             z_min, z_max = list(map(list, zip(*[state_test_range[z_idx] for z_idx in plot_config['z_axis_idx']])))
             for plot_idx, z_idx in enumerate(plot_config['z_axis_idx']):
-                if (hasattr(plot_config, 'angle_dims') and 
-                    z_idx in plot_config['angle_dims'] and
+                if (z_idx in self.dataset.dynamics.periodic_dims and
                     math.isclose(z_max[plot_idx] - z_min[plot_idx], 2.*math.pi, rel_tol=1e-2)):
                     z_max[plot_idx] = z_max[plot_idx] - (z_max[plot_idx] - z_min[plot_idx]) / (z_resolution + 1) 
                 else:
                     z_min[plot_idx], z_max[plot_idx] = state_test_range[z_idx]
         else:
-            z_min, z_max = state_test_range[plot_config['z_axis_idx']]
+            z_idx = plot_config['z_axis_idx']
+            z_min, z_max = state_test_range[z_idx]
+            if (z_idx in self.dataset.dynamics.periodic_dims and
+                math.isclose(z_max - z_min, 2.*math.pi, rel_tol=1e-2)):
+                z_max= z_max - (z_max - z_min) / (z_resolution + 1)
 
         times = torch.linspace(0, self.dataset.tMax, time_resolution)
         xs = torch.linspace(x_min, x_max, x_resolution)
@@ -217,8 +221,9 @@ class QuantifyBinarySafety(EvaluationMetric):
         grid_resolution = val_dict.get('grid_resolution', 51)
         eval_states = torch.cartesian_prod(*[torch.linspace(-1, 1, grid_resolution) 
                                              for _ in range(dataset.dynamics.state_dim)])
-        # FIXME: Does this need to be reshaped?
         self.eval_states = self.dataset.dynamics.state_mean + eval_states * self.dataset.dynamics.state_var
+        for periodic_dim in self.dataset.dynamics.periodic_dims:  # TEMP FIX
+            self.eval_states[:, periodic_dim] = self.eval_states[:, periodic_dim] / self.dataset.dynamics.angle_alpha_factor
         self.add_temporal_data = val_dict.get('add_temporal_data', True)
 
     def __call__(self, model_eval, model_eval_grad):
@@ -470,7 +475,7 @@ class RolloutTrajectories(EvaluationMetric):
         values_over_trajs = torch.zeros(self.batch_size, int((traj_times_hi) / self.dt + 1))
         state_trajs[:, 0] = sample_states
         cost_over_trajs[:, 0] = self.dynamics.boundary_fn(sample_states)
-        for k in range(int((traj_times_hi) / self.dt)):
+        for k in tqdm(range(int((traj_times_hi) / self.dt))):
             traj_time = traj_times_hi - k * self.dt
             if self.is_time_invariant:
                 model_input_time = sample_times.clone().unsqueeze(-1)
