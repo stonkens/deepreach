@@ -281,6 +281,77 @@ class SimpleAir3D(Dynamics):
             'z_axis_idx': 2,
         }
 
+
+class Air3D(Dynamics):
+    def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
+                 pursuer_omega_max:float, angle_alpha_factor:float):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.pursuer_omega_max = pursuer_omega_max
+        self.angle_alpha_factor = angle_alpha_factor
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid',
+            state_dim=3, input_dim=4, control_dim=1, disturbance_dim=1,
+            state_mean=[7, 0, 0], 
+            state_var=[13, 10, self.angle_alpha_factor*math.pi],
+            periodic_dims=[2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact",
+        )
+
+    def state_test_range(self):
+        return [
+            [-6, 20],
+            [-10, 10],
+            [-math.pi, math.pi],
+        ]
+
+    def dsdt(self, state, control, disturbance):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
+        dsdt[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
+        dsdt[..., 2] = disturbance[..., 0] - control[..., 0]
+        return dsdt
+
+    def boundary_fn(self, state):
+        return torch.norm(state[..., :2], dim=-1) - self.collisionR
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, dvds):
+        ham = self.evader_omega_max * torch.abs(dvds[..., 0] * state[..., 1] - 
+                                                dvds[..., 1] * state[..., 0] - 
+                                                dvds[..., 2])  # Control component
+        ham = ham - self.pursuer_omega_max * torch.abs(dvds[..., 2])  # Disturbance component
+        ham = ham + ((self.pursuer_speed * torch.cos(state[..., 2]) - self.evader_speed) * dvds[..., 0] + 
+                     (self.pursuer_speed * torch.sin(state[..., 2]) * dvds[..., 1]))  # Constant component
+        return ham
+    
+    def optimal_control(self, state, dvds):
+        det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
+        return (self.evader_omega_max * torch.sign(det))[..., None]
+    
+    def optimal_disturbance(self, state, dvds):
+        return (-self.pursuer_omega_max * torch.sign(dvds[..., 2]))[..., None]
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0],
+            'state_labels': ['x', 'y', 'theta'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': 2,
+        }
+
+
 class Dubins3D(Dynamics):
     def __init__(self, goalR:float, velocity:float, omega_max:float, angle_alpha_factor:float, set_mode:str, freeze_model: bool):
         self.goalR = goalR

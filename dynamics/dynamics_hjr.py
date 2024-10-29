@@ -64,3 +64,31 @@ class Quad2DAttitude(ControlandDisturbanceAffineDynamics):
         ])
     
 
+class Air3D(ControlandDisturbanceAffineDynamics):
+    def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,
+                 pursuer_omega_max:float, angle_alpha_factor:float, 
+                 tMin:float=0.0, tMax:float=1.0):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.pursuer_omega_max = pursuer_omega_max
+        self.angle_alpha_factor = angle_alpha_factor
+        control_space = sets.Box(jnp.array([-self.evader_omega_max]), jnp.array([self.evader_omega_max]))
+        disturbance_space = sets.Box(jnp.array([-self.pursuer_omega_max]), jnp.array([self.pursuer_omega_max]))
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+    def open_loop_dynamics(self, state, time):
+        x, y, psi = state
+        v_a, v_b = self.evader_speed, self.pursuer_speed
+        return jnp.array([-v_a + v_b * jnp.cos(psi),
+                          v_b * jnp.sin(psi),
+                          0.0])
+    
+    def control_jacobian(self, state, time):
+        x, y, psi = state
+        return jnp.array([[y], [-x], [-1.0]])
+    
+    def disturbance_jacobian(self, state, time):
+        return jnp.array([[0.0], [0.0], [1.0]])
+
