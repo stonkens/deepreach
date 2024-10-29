@@ -233,7 +233,9 @@ class Experiment(ABC):
 
                     model_results = self.model({'coords': model_input['model_coords']})
 
-                    states = self.dataset.dynamics.input_to_coord(model_results['model_in'].detach())[..., 1:]
+                    coords = self.dataset.dynamics.input_to_coord(model_results['model_in'].detach())
+                    times = coords[..., 0]
+                    states = coords[..., 1:]
                     values = self.dataset.dynamics.io_to_value(model_results['model_in'].detach(), model_results['model_out'].squeeze(dim=-1))
                     dvs = self.dataset.dynamics.io_to_dv(model_results['model_in'], model_results['model_out'].squeeze(dim=-1))
                     boundary_values = gt['boundary_values']
@@ -243,9 +245,9 @@ class Experiment(ABC):
                     dirichlet_masks = gt['dirichlet_masks']
 
                     if self.dataset.dynamics.loss_type == 'brt_hjivi':
-                        losses = loss_fn(states, values, dvs[..., 0], dvs[..., 1:], boundary_values, dirichlet_masks, model_results['model_out'])
+                        losses = loss_fn(states, times, values, dvs[..., 0], dvs[..., 1:], boundary_values, dirichlet_masks, model_results['model_out'])
                     elif self.dataset.dynamics.loss_type == 'brat_hjivi':
-                        losses = loss_fn(states, values, dvs[..., 0], dvs[..., 1:], boundary_values, reach_values, avoid_values, dirichlet_masks, model_results['model_out'])
+                        losses = loss_fn(states, times, values, dvs[..., 0], dvs[..., 1:], boundary_values, reach_values, avoid_values, dirichlet_masks, model_results['model_out'])
                     else:
                         raise NotImplementedError
                     
@@ -418,6 +420,7 @@ class Experiment(ABC):
                     # initial self-supervised learning (SSL) val loss
                     # right now, just took code from dataio.py and the SSL training loop above; TODO: refactor all this for cleaner modular code
                     CSL_val_states = CSL_val_coords[..., 1:].to(self.device)
+                    CSL_val_times = CSL_val_coords[..., 0].to(self.device)
                     CSL_val_dvs = self.dataset.dynamics.io_to_dv(CSL_val_results['model_in'], CSL_val_results['model_out'].squeeze(dim=-1))
                     CSL_val_boundary_values = self.dataset.dynamics.boundary_fn(CSL_val_states)
                     if self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -425,9 +428,9 @@ class Experiment(ABC):
                         CSL_val_avoid_values = self.dataset.dynamics.avoid_fn(CSL_val_states)
                     CSL_val_dirichlet_masks = CSL_val_coords[:, 0].to(self.device) == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
                     if self.dataset.dynamics.loss_type == 'brt_hjivi':
-                        SSL_val_losses = loss_fn(CSL_val_states, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_dirichlet_masks)
+                        SSL_val_losses = loss_fn(CSL_val_states, CSL_val_times, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_dirichlet_masks)
                     elif self.dataset.dynamics.loss_type == 'brat_hjivi':
-                        SSL_val_losses = loss_fn(CSL_val_states, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_reach_values, CSL_val_avoid_values, CSL_val_dirichlet_masks)
+                        SSL_val_losses = loss_fn(CSL_val_states, CSL_val_times, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_reach_values, CSL_val_avoid_values, CSL_val_dirichlet_masks)
                     else:
                         NotImplementedError
                     SSL_val_loss = SSL_val_losses['diff_constraint_hom'].mean() # I assume there is no dirichlet (boundary) loss here, because I do not ever explicitly generate source samples at tMin (i.e. torch.all(CSL_val_dirichlet_masks == False))
@@ -451,6 +454,7 @@ class Experiment(ABC):
                             CSL_batch_loss = CSL_loss_weight*torch.mean(torch.pow(CSL_batch_errors, 2))
 
                             CSL_batch_states = CSL_batch_coords[..., 1:].to(self.device)
+                            CSL_batch_times = CSL_batch_coords[..., 0].to(self.device)
                             CSL_batch_dvs = self.dataset.dynamics.io_to_dv(CSL_batch_results['model_in'], CSL_batch_results['model_out'].squeeze(dim=-1))
                             CSL_batch_boundary_values = self.dataset.dynamics.boundary_fn(CSL_batch_states)
                             if self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -458,9 +462,9 @@ class Experiment(ABC):
                                 CSL_batch_avoid_values = self.dataset.dynamics.avoid_fn(CSL_batch_states)
                             CSL_batch_dirichlet_masks = CSL_batch_coords[:, 0].to(self.device) == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
                             if self.dataset.dynamics.loss_type == 'brt_hjivi':
-                                SSL_batch_losses = loss_fn(CSL_batch_states, CSL_batch_preds, CSL_batch_dvs[..., 0], CSL_batch_dvs[..., 1:], CSL_batch_boundary_values, CSL_batch_dirichlet_masks)
+                                SSL_batch_losses = loss_fn(CSL_batch_states, CSL_batch_times, CSL_batch_preds, CSL_batch_dvs[..., 0], CSL_batch_dvs[..., 1:], CSL_batch_boundary_values, CSL_batch_dirichlet_masks)
                             elif self.dataset.dynamics.loss_type == 'brat_hjivi':
-                                SSL_batch_losses = loss_fn(CSL_batch_states, CSL_batch_preds, CSL_batch_dvs[..., 0], CSL_batch_dvs[..., 1:], CSL_batch_boundary_values, CSL_batch_reach_values, CSL_batch_avoid_values, CSL_batch_dirichlet_masks)
+                                SSL_batch_losses = loss_fn(CSL_batch_states, CSL_batch_times, CSL_batch_preds, CSL_batch_dvs[..., 0], CSL_batch_dvs[..., 1:], CSL_batch_boundary_values, CSL_batch_reach_values, CSL_batch_avoid_values, CSL_batch_dirichlet_masks)
                             else:
                                 NotImplementedError
                             SSL_batch_loss = SSL_batch_losses['diff_constraint_hom'].mean() # I assume there is no dirichlet (boundary) loss here, because I do not ever explicitly generate source samples at tMin (i.e. torch.all(CSL_batch_dirichlet_masks == False))
@@ -482,6 +486,7 @@ class Experiment(ABC):
                         CSL_val_loss = torch.mean(torch.pow(CSL_val_errors, 2))
                     
                         CSL_val_states = CSL_val_coords[..., 1:].to(self.device)
+                        CSL_val_times = CSL_val_coords[..., 0].to(self.device)
                         CSL_val_dvs = self.dataset.dynamics.io_to_dv(CSL_val_results['model_in'], CSL_val_results['model_out'].squeeze(dim=-1))
                         CSL_val_boundary_values = self.dataset.dynamics.boundary_fn(CSL_val_states)
                         if self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -489,9 +494,9 @@ class Experiment(ABC):
                             CSL_val_avoid_values = self.dataset.dynamics.avoid_fn(CSL_val_states)
                         CSL_val_dirichlet_masks = CSL_val_coords[:, 0].to(self.device) == self.dataset.tMin # assumes time unit in dataset (model) is same as real time units
                         if self.dataset.dynamics.loss_type == 'brt_hjivi':
-                            SSL_val_losses = loss_fn(CSL_val_states, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_dirichlet_masks)
+                            SSL_val_losses = loss_fn(CSL_val_states, CSL_val_times, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_dirichlet_masks)
                         elif self.dataset.dynamics.loss_type == 'brat_hjivi':
-                            SSL_val_losses = loss_fn(CSL_val_states, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_reach_values, CSL_val_avoid_values, CSL_val_dirichlet_masks)
+                            SSL_val_losses = loss_fn(CSL_val_states, CSL_val_times, CSL_val_preds, CSL_val_dvs[..., 0], CSL_val_dvs[..., 1:], CSL_val_boundary_values, CSL_val_reach_values, CSL_val_avoid_values, CSL_val_dirichlet_masks)
                         else:
                             raise NotImplementedError
                         SSL_val_loss = SSL_val_losses['diff_constraint_hom'].mean() # I assume there is no dirichlet (boundary) loss here, because I do not ever explicitly generate source samples at tMin (i.e. torch.all(CSL_val_dirichlet_masks == False))

@@ -406,7 +406,7 @@ class RolloutTrajectories(EvaluationMetric):
         dvs = model_eval_grad(curr_coords)
         controls = self.dynamics.optimal_control(curr_coords[:, 1:], dvs[..., 1:])
         disturbances = self.dynamics.optimal_disturbance(curr_coords[:, 1:], dvs[..., 1:])
-        next_states = (curr_coords[:, 1:] + self.dt * self.dynamics.dsdt(curr_coords[:, 1:], controls, disturbances))
+        next_states = (curr_coords[:, 1:] + self.dt * self.dynamics.dsdt(curr_coords[:, 1:], controls, disturbances, curr_coords[:, :1]))
         return next_states, controls, disturbances
         
     def get_coords(self, model_eval, time_interval):

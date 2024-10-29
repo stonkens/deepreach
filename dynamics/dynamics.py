@@ -119,7 +119,7 @@ class Dynamics(ABC):
         return wrapped_state 
 
     @abstractmethod
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         raise NotImplementedError
     
     @abstractmethod
@@ -135,7 +135,7 @@ class Dynamics(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         raise NotImplementedError
 
     @abstractmethod
@@ -178,7 +178,7 @@ class ParameterizedVertDrone2D(Dynamics):
     # \dot v = k*u - g
     # \dot z = v
     # \dot k = 0
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2]*control[..., 0] - self.gravity
         dsdt[..., 1] = state[..., 0]
@@ -194,7 +194,7 @@ class ParameterizedVertDrone2D(Dynamics):
     def cost_fn(self, state_traj):
         raise NotImplementedError
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         return state[..., 2]*torch.abs(dvds[..., 0]*self.input_magnitude_max) \
                 - dvds[..., 0]*self.gravity \
                 + dvds[..., 1]*state[..., 0]
@@ -243,7 +243,7 @@ class SimpleAir3D(Dynamics):
     # \dot x    = -v + v \cos \psi + u y
     # \dot y    = v \sin \psi - u x
     # \dot \psi = d - u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = -self.velocity + self.velocity*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
@@ -259,7 +259,7 @@ class SimpleAir3D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         ham = self.omega_max * torch.abs(dvds[..., 0] * state[..., 1] - dvds[..., 1] * state[..., 0] - dvds[..., 2])  # Control component
         ham = ham - self.omega_max * torch.abs(dvds[..., 2])  # Disturbance component
         ham = ham + (self.velocity * (torch.cos(state[..., 2]) - 1.0) * dvds[..., 0]) + (self.velocity * torch.sin(state[..., 2]) * dvds[..., 1])  # Constant component
@@ -310,7 +310,7 @@ class Air3D(Dynamics):
             [-math.pi, math.pi],
         ]
 
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
         dsdt[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
@@ -326,7 +326,7 @@ class Air3D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         ham = self.evader_omega_max * torch.abs(dvds[..., 0] * state[..., 1] - 
                                                 dvds[..., 1] * state[..., 0] - 
                                                 dvds[..., 2])  # Control component
@@ -382,7 +382,7 @@ class Dubins3D(Dynamics):
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = self.velocity*torch.cos(state[..., 2])
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 2])
@@ -398,7 +398,7 @@ class Dubins3D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         if self.freeze_model:
             raise NotImplementedError
         if self.set_mode == 'reach':
@@ -460,7 +460,7 @@ class Dubins3DParameterizedDisturbance(Dynamics):
     # \dot y    = v \sin \theta
     # \dot \theta = u
     # \dot \beta = 0
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         if self.freeze_model:
             raise NotImplementedError
         dsdt = torch.zeros_like(state)
@@ -479,7 +479,7 @@ class Dubins3DParameterizedDisturbance(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         if self.freeze_model:
             raise NotImplementedError
         if self.set_mode == 'reach':
@@ -570,10 +570,10 @@ class Dubins4D(Dynamics):
     def cost_fn(self, state_traj):
         raise NotImplementedError
 
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         raise NotImplementedError
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         raise NotImplementedError
 
     def optimal_control(self, state, dvds):
@@ -621,7 +621,7 @@ class Quad2DAttitude(Dynamics):
             [-1.4, 1.4]
         ]
     
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2]
         dsdt[..., 1] = state[..., 3]
@@ -638,10 +638,10 @@ class Quad2DAttitude(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         optimal_control = self.optimal_control(state, dvds)
         optimal_disturbance = self.optimal_disturbance(state, dvds)
-        flow = self.dsdt(state, optimal_control, optimal_disturbance)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
         return torch.sum(flow*dvds, dim=-1)
     
     def optimal_control(self, state, dvds):
@@ -766,7 +766,7 @@ class NarrowPassage(Dynamics):
     # \dot th  = ...
     # \dot v   = ...
     # \dot phi = ...
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 3]*torch.cos(state[..., 2])
         dsdt[..., 1] = state[..., 3]*torch.sin(state[..., 2])
@@ -831,7 +831,7 @@ class NarrowPassage(Dynamics):
             avoid_values = self.avoid_fn(state_traj)
             return torch.min(torch.maximum(reach_values, torch.cummax(-avoid_values, dim=-1).values), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         optimal_control = self.optimal_control(state, dvds)
         return state[..., 3] * torch.cos(state[..., 2]) * dvds[..., 0] + \
                state[..., 3] * torch.sin(state[..., 2]) * dvds[..., 1] + \
@@ -916,7 +916,7 @@ class ReachAvoidRocketLanding(Dynamics):
     # \dot v_x = u1 * cos(th) - u2 sin(th)
     # \dot v_y = u1 * sin(th) + u2 cos(th) - 9.81
     # \dot w = 0.3 * u1
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 3]
         dsdt[..., 1] = state[..., 4]
@@ -973,7 +973,7 @@ class ReachAvoidRocketLanding(Dynamics):
         avoid_values = self.avoid_fn(state_traj)
         return torch.min(torch.maximum(reach_values, torch.cummax(-avoid_values, dim=-1).values), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Control Hamiltonian
         u1_coeff = dvds[..., 3] * torch.cos(state[..., 2]) + dvds[..., 4] * torch.sin(state[..., 2]) + 0.3 * dvds[..., 5]
         u2_coeff = -dvds[..., 3] * torch.sin(state[..., 2]) + dvds[..., 4] * torch.cos(state[..., 2])
@@ -1073,7 +1073,7 @@ class RocketLanding(Dynamics):
     # \dot v_x = u1 * cos(th) - u2 sin(th)
     # \dot v_y = u1 * sin(th) + u2 cos(th) - 9.81
     # \dot w = 0.3 * u1
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 3]
         dsdt[..., 1] = state[..., 4]
@@ -1105,7 +1105,7 @@ class RocketLanding(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Control Hamiltonian
         u1_coeff = dvds[..., 3] * torch.cos(state[..., 2]) + dvds[..., 4] * torch.sin(state[..., 2]) + 0.3 * dvds[..., 5]
         u2_coeff = -dvds[..., 3] * torch.sin(state[..., 2]) + dvds[..., 4] * torch.cos(state[..., 2])
@@ -1181,7 +1181,7 @@ class Quadrotor(Dynamics):
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         qw = state[..., 3] * 1.0
         qx = state[..., 4] * 1.0
         qy = state[..., 5] * 1.0
@@ -1223,7 +1223,7 @@ class Quadrotor(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         if self.set_mode == 'reach':
             raise NotImplementedError
 
@@ -1351,7 +1351,7 @@ class MultiVehicleCollision(Dynamics):
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = self.velocity*torch.cos(state[..., 6])
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 6])
@@ -1384,7 +1384,7 @@ class MultiVehicleCollision(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Compute the hamiltonian for the ego vehicle
         ham = self.velocity*(torch.cos(state[..., 6]) * dvds[..., 0] + torch.sin(state[..., 6]) * dvds[..., 1]) + self.omega_max * torch.abs(dvds[..., 6])
         # Hamiltonian effect due to other vehicles
