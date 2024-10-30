@@ -1606,7 +1606,7 @@ class Quad2DAttitude_parametric(Dynamics):
             loss_type='brt_hjivi', set_mode=set_mode,
             state_dim=4+2, input_dim=5+2, control_dim=2, disturbance_dim=4,
             state_mean=[0., 1.3, 0, 0,    self.max_pos_dist/2, self.max_vel_dist/2],
-            state_var=[5., 1.5, 2, 2,     (self.max_pos_dist/2)**2 + 0.05, (self.max_vel_dist/2)**2 + 0.05], # NOTE: try increasing range to capture 0 and max
+            state_var=[5., 1.5, 2, 2,     (self.max_pos_dist/2) + 0.05, (self.max_vel_dist/2) + 0.05], # NOTE: try increasing range to capture 0 and max
             value_mean=0.2,
             value_var=0.5,
             value_normto=0.02,
