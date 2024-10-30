@@ -41,11 +41,20 @@ class VisualizeSafeSet2D(EvaluationMetric):
     - Modify val_dict to change the resolution of the grid, the time slices, and the state slices.
     - Modify state_test_range and plot_config in the dynamics function to change the range and state slices.
     """
-    def __init__(self, dataset, val_dict):
+    def __init__(self, dataset, val_dict, parametric=None):
+        """
+        Args: 
+            - dataset
+            - val_dict
+            - parametric: default None, otherwise list of parameters to evaluate model at, when specified and the dynamics model is parameteric 
+        """
         self.dataset = dataset
         self.val_dict = val_dict
         self.save_path = val_dict.get('save_path', None)
-    
+
+        self.parametric = parametric 
+        self.isHJR = False 
+
     def __call__(self, model_eval, model_eval_grad, vis_type='imshow'):
         """
         Generate and visualize the safe set for the model using 2D plots. 
@@ -105,6 +114,12 @@ class VisualizeSafeSet2D(EvaluationMetric):
                 coords = torch.zeros(x_resolution*y_resolution, self.dataset.dynamics.state_dim + 1)
                 coords[:, 0] = times[i]
                 coords[:, 1:] = torch.tensor(plot_config['state_slices'])
+
+                # Append parametric model inputs
+                if self.parametric is not None and hasattr(self.dataset.dynamics, 'parametric_dims') and not self.isHJR:
+                    for param_num in range(len(self.dataset.dynamics.parametric_dims)):
+                        coords[:, self.dataset.dynamics.parametric_dims[param_num] + 1] = self.parametric[param_num]
+
                 coords[:, 1 + plot_config['x_axis_idx']] = xys[:, 0]
                 coords[:, 1 + plot_config['y_axis_idx']] = xys[:, 1]
                 if isinstance(plot_config['z_axis_idx'], list):
@@ -150,7 +165,17 @@ class VisualizeSafeSet2D(EvaluationMetric):
         return {"safe_set": wandb.Image(fig)}
 
 
+
 class VisualizeSafeSet2DHJR(VisualizeSafeSet2D):
+    """
+    Implementation for HJR
+    """
+    def __init__(self, dataset, val_dict, parametric=None): 
+        super().__init__(dataset, val_dict, parametric=parametric)
+        self.isHJR = True
+        
+
+class VisualizeSafeSet2DHJR_OLD(VisualizeSafeSet2D):
     """
     Purpose: HJ implementation of VisualizeSafeSet2D
     """
@@ -179,9 +204,9 @@ class VisualizeValueDifference2D(VisualizeSafeSet2D):
              other states.
     See VisualizeSafeSet2D for details on how to adjust the visualization.
     """
-    def __init__(self, dataset, val_dict, ground_truth):
+    def __init__(self, dataset, val_dict, ground_truth, parametric=None):
         self.ground_truth = ground_truth
-        super().__init__(dataset, val_dict)
+        super().__init__(dataset, val_dict, parametric=parametric)
 
     def __call__(self, model_eval, model_eval_grad):
         """
@@ -189,7 +214,16 @@ class VisualizeValueDifference2D(VisualizeSafeSet2D):
             model_eval: Function to evaluate the model on given coordinates.
             model_eval_grad: Gradient of the model evaluation function (unused here). 
         """
-        new_eval = lambda x: model_eval(x) - self.ground_truth.value_from_coords(x)
+        # new_eval = lambda x: model_eval(x) - self.ground_truth.value_from_coords(x)
+        def new_eval(x): 
+
+            if hasattr(self.dataset.dynamics, 'parametric_dims') and self.parametric is not None:
+                gt_coords = x[:, [0] + self.dataset.dynamics.coord_state_dims] # include time at 0 and shifted state dims 
+            else: 
+                gt_coords = x
+
+            return model_eval(x) - self.ground_truth.value_from_coords(gt_coords)
+
         log_dict = super().__call__(new_eval, model_eval_grad, vis_type='contourf')
         new_dict = {}
         for key, value in log_dict.items():
@@ -203,20 +237,31 @@ class QuantifyBinarySafety(EvaluationMetric):
     - Modify val_dict to change the resolution of the grid and the time slices
         NOTE: Expects different grid and resolution compared to VisualizeSafeSet2D (this should be over all states)
     """
-    def __init__(self, dataset, val_dict):
+    def __init__(self, dataset, val_dict, parametric=None):
         """
         Same eval_states and eval_times for all evaluations.
         Args:
             dataset: Dataset object
             val_dict: Dictionary of evaluation parameters
+            parametric: default None, when specified and the dynamics model is parameteric use only those parameters in the eval inputs for model evaluation
         add_temporal_data: Whether to add temporal data (at different value function slices) to the log_dict
         """
         self.dataset = dataset
         time_resolution = val_dict.get('time_resolution', 5)
         self.eval_times = torch.linspace(self.dataset.tMin, self.dataset.tMax, time_resolution).to('cuda')
         grid_resolution = val_dict.get('grid_resolution', 51)
-        eval_states = torch.cartesian_prod(*[torch.linspace(-1, 1, grid_resolution) 
-                                             for _ in range(dataset.dynamics.state_dim)])
+        self.parametric = parametric
+        if hasattr(self.dataset.dynamics, 'parametric_dims') and parametric is not None:
+            eval_states = torch.cartesian_prod(*[torch.linspace(-1, 1, grid_resolution) 
+                                                for _ in range(len(dataset.dynamics.state_dims))])
+            # add parametric dims 
+            parametric_states = torch.zeros((eval_states.shape[0], len(dataset.dynamics.parametric_dims)))
+            for param_num in range(len(dataset.dynamics.parametric_dims)):
+                parametric_states[:, param_num] = parametric[param_num]
+            eval_states = torch.cat((eval_states, parametric_states), dim=1)
+        else: 
+            eval_states = torch.cartesian_prod(*[torch.linspace(-1, 1, grid_resolution) 
+                                                for _ in range(dataset.dynamics.state_dim)])
         # FIXME: Does this need to be reshaped?
         self.eval_states = self.dataset.dynamics.state_mean + eval_states * self.dataset.dynamics.state_var
         self.add_temporal_data = val_dict.get('add_temporal_data', True)
@@ -259,13 +304,25 @@ class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
     See QuantifyBinarySafety for details on how to adjust the visualization.
     FIXME: If the grid is the same, we require the same time_resolution for the ground truth and the validation points.
     """
-    def __init__(self, dataset, val_dict, ground_truth=None):
-        super().__init__(dataset, val_dict)
+    def __init__(self, dataset, val_dict, ground_truth=None, parametric=None):
+        """
+        Args: 
+            - ground_truth: the ground truth to compare the model against
+            - parametric: default None, when specified and the dynamics model is parameteric use those parameters in the eval inputs for model evaluation
+        """
+        super().__init__(dataset, val_dict, parametric=parametric)
+
+        # Set up ground truth eval states - different if model is parametric 
+        if hasattr(dataset.dynamics, 'parametric_dims') and parametric is not None:
+            self.gt_eval_states = torch.tensor(self.eval_states[..., self.dataset.dynamics.state_dims])
+        else: 
+            self.gt_eval_states = torch.tensor(self.eval_states)
+
         self.ground_truth = ground_truth
-        if self.ground_truth.recompute_values(self.eval_states, self.eval_times):
+        if self.ground_truth.recompute_values(self.gt_eval_states, self.eval_times):
             gt_values = []
             for timestep in self.eval_times:
-                gt_values.append(self.ground_truth(self.eval_states, timestep))
+                gt_values.append(self.ground_truth(self.gt_eval_states, timestep))
             gt_values = torch.cat(gt_values, dim=1)
         else:
             gt_values = j2t(self.ground_truth.get_values_table()[0])
@@ -340,13 +397,23 @@ class RolloutTrajectories(EvaluationMetric):
     How to adjust the metrics:
     - Modify val_dict to change the dt, rollout_batch_size, samples_per_round_multiplier, and the sample_generator.
     """
-    def __init__(self, dataset, val_dict, is_time_invariant=True):
+    def __init__(self, dataset, val_dict, is_time_invariant=True, parametric=None):
         self.dataset = dataset
         self.dynamics = dataset.dynamics
         self.val_dict = val_dict
         self.dt = val_dict['dt']
+        self.parametric = parametric 
+        self.isHJR = False # default - overrriden by the HJR types of these functions
+
+        if parametric is not None and hasattr(self.dynamics, 'parametric_dims'): 
+            slices = [None] * self.dynamics.state_dim
+            for param_num in range(len(self.dynamics.parametric_dims)):
+                slices[self.dynamics.parametric_dims[param_num]] = parametric[param_num]
+        else: 
+            slices = [None] * self.dynamics.state_dim
+
         self.sample_generator = val_dict.get('sample_generator', SliceSampleGenerator(self.dynamics, 
-                                                                                      [None]*self.dynamics.state_dim))
+                                                                                      slices)) #[None]*self.dynamics.state_dim))
         self.sample_validator = val_dict.get('sample_validator', ValueThresholdValidator(v_min=float(0.0), 
                                                                                          v_max=float('inf')))
         self.violation_validator = val_dict.get('violation_validator', ValueThresholdValidator(v_min=float('-inf'),
@@ -492,7 +559,12 @@ class RolloutTrajectories(EvaluationMetric):
             not_started_times = traj_sample_times < (traj_time - self.dt / 2)
             started_times = ~not_started_times
             state_trajs[not_started_times, k + 1] = state_trajs[not_started_times, k]
-            state_trajs[started_times, k + 1] = next_states[started_times].to('cpu')
+            if self.isHJR and hasattr(self.dynamics, 'parametric_dims'): 
+                kp1_next_states = torch.cat((next_states[started_times].to('cpu'), state_trajs[started_times, k][..., self.dynamics.parametric_dims]), dim=-1) # take the parameters (that don't change) from the previous round 
+                state_trajs[started_times, k+1] = kp1_next_states
+            else: 
+                state_trajs[started_times, k + 1] = next_states[started_times].to('cpu')
+
             controls_trajs[started_times, k] = controls[started_times].to('cpu')
             cost_over_trajs[:, k + 1] = self.dynamics.boundary_fn(state_trajs[:, k + 1])
         curr_coords = torch.cat((model_input_time, state_trajs[:, -1]), dim=-1).to(self.device)
@@ -525,8 +597,8 @@ class FixedRolloutTrajectories(RolloutTrajectories):
     Purpose: Evaluate the model with rollouts from the value function with fixed samples.
     - Useful for training validation where we want to compare the model over time
     """
-    def __init__(self, dataset, val_dict):
-        RolloutTrajectories.__init__(self, dataset, val_dict)
+    def __init__(self, dataset, val_dict, parametric=None):
+        RolloutTrajectories.__init__(self, dataset, val_dict, parametric=parametric)
         self.fixed_samples = True
         self.fixed_samples_validator = val_dict['fixed_samples_validator']
         _, self.sampling_states = self.generate_samples(None, 1.0, 1.0, self.fixed_samples_validator)
@@ -599,12 +671,17 @@ class RolloutTrajectoriesHJR(RolloutTrajectories):
     """
     Purpose: HJR implementation of RolloutTrajectories
     """
-    def __init__(self, dataset, val_dict, ground_truth):
-        RolloutTrajectories.__init__(self, dataset, val_dict)
+    def __init__(self, dataset, val_dict, ground_truth, parametric=None):
+        RolloutTrajectories.__init__(self, dataset, val_dict, parametric=parametric) # Specify parameters for HJR too so that the same states can be used to compare against the NN model
         self.ground_truth = ground_truth
+        self.isHJR = True
 
     def get_optimal_trajectory(self, curr_coords, model_eval_grad):
-        curr_coords = t2j(curr_coords)
+        if hasattr(self.dataset.dynamics, 'parametric_dims'): 
+            curr_coords = t2j(curr_coords[..., [0] + self.dataset.dynamics.coord_state_dims])
+        else: 
+            curr_coords = t2j(curr_coords)
+            
         # Get gradient values
         grad_values = self.ground_truth.get_values_gradient(curr_coords[:, 1:], curr_coords[:, 0])
         # Get optimal control and disturbance
@@ -616,8 +693,12 @@ class RolloutTrajectoriesHJR(RolloutTrajectories):
         return j2t(next_states), j2t(control), j2t(disturbance)
 
     def __call__(self, model_eval, model_eval_grad):
-        model_eval = lambda x: self.ground_truth.value_from_coords(x)
-        model_eval_grad = lambda x: self.ground_truth.value_gradient_from_coords(x)
+        if hasattr(self.dataset.dynamics, 'parametric_dims'): 
+            model_eval = lambda x: self.ground_truth.value_from_coords(x[..., [0] + self.dataset.dynamics.coord_state_dims])
+            model_eval_grad = lambda x: self.ground_truth.value_gradient_from_coords(x[..., [0] + self.dataset.dynamics.coord_state_dims])
+        else: 
+            model_eval = lambda x: self.ground_truth.value_from_coords(x)
+            model_eval_grad = lambda x: self.ground_truth.value_gradient_from_coords(x)
         return RolloutTrajectories.__call__(self, model_eval, model_eval_grad)
     
 
@@ -625,9 +706,10 @@ class FixedRolloutTrajectoriesHJR(FixedRolloutTrajectories, RolloutTrajectoriesH
     """
     Purpose: HJR implementation of FixedRolloutTrajectories
     """
-    def __init__(self, dataset, val_dict, ground_truth):
-        FixedRolloutTrajectories.__init__(self, dataset, val_dict)
+    def __init__(self, dataset, val_dict, ground_truth, parametric=None):
+        FixedRolloutTrajectories.__init__(self, dataset, val_dict, parametric=parametric)
         self.ground_truth = ground_truth
+        self.isHJR = True
     
     def get_coords(self, model_eval, time_interval):
         return FixedRolloutTrajectories.get_coords(self, model_eval, time_interval)
@@ -643,9 +725,13 @@ class RolloutTrajectoriesWithVisualsHJR(RolloutTrajectoriesWithVisuals, FixedRol
     """
     Purpose: HJR implementation of RolloutTrajectoriesWithVisuals
     """
-    def __init__(self, dataset, val_dict, ground_truth):
-        FixedRolloutTrajectoriesHJR.__init__(self, dataset, val_dict, ground_truth)
+    def __init__(self, dataset, val_dict, ground_truth, parametric=None):
+        FixedRolloutTrajectoriesHJR.__init__(self, dataset, val_dict, ground_truth, parametric=parametric)
+        self.isHJR = True
     
     def __call__(self, model_eval, model_eval_grad):
-        model_eval = lambda x: self.ground_truth.value_from_coords(x)
+        if hasattr(self.dataset.dynamics, 'parametric_dims'): 
+            model_eval = lambda x: self.ground_truth.value_from_coords(x[..., [0] + self.dataset.dynamics.coord_state_dims])
+        else: 
+            model_eval = lambda x: self.ground_truth.value_from_coords(x)
         return RolloutTrajectoriesWithVisuals.__call__(self, model_eval, model_eval_grad)

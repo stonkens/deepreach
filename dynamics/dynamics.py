@@ -564,10 +564,10 @@ class Quad2DAttitude(Dynamics):
     
     def dsdt(self, state, control, disturbance):
         dsdt = torch.zeros_like(state)
-        dsdt[..., 0] = state[..., 2]
-        dsdt[..., 1] = state[..., 3]
-        dsdt[..., 2] = self.gravity * control[..., 0]
-        dsdt[..., 3] = control[..., 1] - self.gravity
+        dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
+        dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
+        dsdt[..., 2] = self.gravity * control[..., 0] + disturbance[..., 2]
+        dsdt[..., 3] = control[..., 1] - self.gravity + disturbance[..., 3]
         return dsdt
     
     def boundary_fn(self, state):
@@ -1548,6 +1548,175 @@ class Drone4D(Dynamics):
         return {
             'state_slices': [0, 0, 0, 0],
             'state_labels': ['y', 'z', r'$v_y$', r'$v_z$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+
+
+#################### Nikhil: Parametric Dynamics ####################
+"""
+Design choices: 
+1. Add the parameters as additional inputs at the end of the state 
+2. The parameter dimensions and corresponding input names (for hj reachability) are specified with attributes: 
+    2.1 parametric_dims: indices of the parametric values in the state vector
+    2.2 parametric_names: names of the parametric values - used to specify / vary parameter names for ground truth hj reachability
+    2.3 state_dims: indices corresponding to the state / non parametric values of the state vector
+3. parameter_test_slices: list of lists: where sublists are each full parameter configuration you want to evaluate
+"""
+
+class Quad2DAttitude_parametric(Dynamics):
+    def __init__(self, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, set_mode: str='avoid', 
+                 max_pos_dist: float = 0.0, max_vel_dist: float = 0.0):
+        """
+        args: 
+            - max_pos_dist: maximum disturbance in position
+            - max_vel_dist: maximum disturbance in velocity
+        The maximum bounds specified here are the maximum for the parametric disturbance. So these are the worst case the parametric disturbance can take. 
+
+        The max disturbance bounds are parametric and fed in as the last 2 parts of the state vector: 
+        max_pos_dist, max_vel_dist 
+        """
+        import numpy as np 
+
+        self.gravity = gravity
+        self.max_angle = max_angle
+        self.min_thrust = min_thrust
+        self.max_thrust = max_thrust
+
+        self.max_pos_dist = max_pos_dist
+        self.max_vel_dist = max_vel_dist
+
+        # Parametric dynamics specific
+        self.parametric_dims = [4, 5] # indices of the parametric values in the state vector
+        self.parametric_names = ['max_pos_dist', 'max_vel_dist']
+        self.coord_parametric_dims = list(np.array(self.parametric_dims) + 1) # indices corresponding to parametric dimensions in input coords - time is added as the 0th input
+        self.state_dims = [0, 1, 2, 3] # indices corresponding to the state dimensions
+        self.coord_state_dims = list(np.array(self.state_dims) + 1)# indices corresponding to state dimensions in input coords - time is added as the 0th input
+
+        from utils import boundary_functions
+        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+        self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+
+        # Additional 2 dimensions for the parameteric disturbance bounds 
+        super().__init__(
+            loss_type='brt_hjivi', set_mode=set_mode,
+            state_dim=4+2, input_dim=5+2, control_dim=2, disturbance_dim=4,
+            state_mean=[0., 1.3, 0, 0,    self.max_pos_dist/2, self.max_vel_dist/2],
+            state_var=[5., 1.5, 2, 2,     (self.max_pos_dist/2)**2 + 0.05, (self.max_vel_dist/2)**2 + 0.05], # NOTE: try increasing range to capture 0 and max
+            value_mean=0.2,
+            value_var=0.5,
+            value_normto=0.02,
+            deepreach_model="exact"
+        )
+
+    def state_test_range(self):
+        return [
+            [-5, 5], 
+            [-0.2, 2.8],
+            [-1.4, 1.4],
+            [-1.4, 1.4],
+            #
+            [self.max_pos_dist, self.max_pos_dist], #[0, self.max_pos_dist], # only test in worst case 
+            [self.max_vel_dist, self.max_vel_dist] #[0, self.max_vel_dist]
+        ]
+    
+    def parameter_test_slices(self): 
+        """
+        The parameter slices to evaluate and plot with
+        """
+        # return [[0., 0., ], 
+        #         [self.max_pos_dist/2, self.max_vel_dist/2], 
+        #         [self.max_pos_dist/2, self.max_vel_dist], 
+        #         [self.max_pos_dist, self.max_vel_dist/2], 
+        #         [self.max_pos_dist, self.max_vel_dist]]
+
+        # return [[0., 0., ],]
+        return [[0., 0., ], 
+                [self.max_pos_dist/2, self.max_vel_dist/2], 
+                [self.max_pos_dist/2, self.max_vel_dist], 
+                [self.max_pos_dist, self.max_vel_dist]]
+
+    def equivalent_wrapped_state(self, state):
+        wrapped_state = torch.clone(state)
+        return wrapped_state
+    
+    def dsdt(self, state, control, disturbance):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2]
+        dsdt[..., 1] = state[..., 3]
+        dsdt[..., 2] = self.gravity * control[..., 0]
+        dsdt[..., 3] = control[..., 1] - self.gravity
+
+        # No dynamics on the max disturbance changing 
+        dsdt[..., 4] = 0 #dsdt[..., 4]
+        dsdt[..., 5] = 0 #dsdt[..., 5]
+        return dsdt
+    
+    def boundary_fn(self, state):
+        return self.sdf(state)
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+
+    def hamiltonian(self, state, dvds):
+        optimal_control = self.optimal_control(state, dvds)
+        optimal_disturbance = self.optimal_disturbance(state, dvds)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance)
+        return torch.sum(flow*dvds, dim=-1)
+    
+    def optimal_control(self, state, dvds):
+        if self.set_mode == "avoid":
+            # a1 = torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.min_thrust + torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
+        elif self.set_mode == "reach":
+            # a1 = -torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.max_thrust - torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((a1[..., None], a2[..., None]), dim=-1)
+
+    def optimal_disturbance(self, state, dvds):
+        
+        max_pos_dist = state[..., 4]
+        max_vel_dist = state[..., 5]
+
+        if self.set_mode == "avoid":
+            # d1 = -torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] > 0, -max_pos_dist, max_pos_dist)
+            d2 = torch.where(dvds[..., 1] > 0, -max_pos_dist, max_pos_dist)
+            d3 = torch.where(dvds[..., 2] > 0, -max_vel_dist, max_vel_dist)
+            d4 = torch.where(dvds[..., 3] > 0, -max_vel_dist, max_vel_dist)
+        elif self.set_mode == "reach":
+            # d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] < 0, -max_pos_dist, max_pos_dist)
+            d2 = torch.where(dvds[..., 1] < 0, -max_pos_dist, max_pos_dist)
+            d3 = torch.where(dvds[..., 2] < 0, -max_vel_dist, max_vel_dist)
+            d4 = torch.where(dvds[..., 3] < 0, -max_vel_dist, max_vel_dist)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
+    
+    def plot_config(self): # TODO: change this 
+        return {
+            'state_slices': [0, 0, 0, 0,   0, 0], # visualize at the worst case for now 
+            'state_labels': ['y', 'z', r'$v_y$', r'$v_z$',   'max_pos_dist', 'max_vel_dist'],
             'x_axis_idx': 0,
             'y_axis_idx': 1,
             'z_axis_idx': [2, 3],

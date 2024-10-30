@@ -10,13 +10,24 @@ class GroundTruthHJSolution:
         import hj_reachability as hj
         import jax.numpy as jnp
         self.hj_dynamics = hj_dynamics
-        state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy())
-        state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy())
+        self.is_parametric = False 
+        if hasattr(self.hj_dynamics.torch_dynamics, "parametric_dims"):
+            self.is_parametric = True 
+            self.non_parametric_state_dims = self.hj_dynamics.torch_dynamics.state_dims
+
+        if self.is_parametric:
+            state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy()[self.non_parametric_state_dims])
+            state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy()[self.non_parametric_state_dims])
+            grid_resolution = tuple([51]) * len(self.non_parametric_state_dims)
+        else: 
+            state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy())
+            state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy())
+            grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
+
         state_hi = state_mean + state_var
         state_lo = state_mean - state_var
         state_domain = hj.sets.Box(lo=state_lo, hi=state_hi)
         
-        grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
         self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution)
         # sdf_values = t2j(self.hj_dynamics.torch_dynamics.sdf(j2t(self.grid.states)))
         sdf_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
@@ -29,7 +40,7 @@ class GroundTruthHJSolution:
         self.value_functions = hj.solve(solver_settings, self.hj_dynamics, self.grid, self.times, 
                                         sdf_values, progress_bar=True)
         self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
-        self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0) * self.grid.ndim)
+        self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0, 0, 0, 0))
         
     def __call__(self, state, time):
         # Find nearest time
@@ -85,11 +96,17 @@ class GroundTruthHJSolution:
     
     def value_gradient_from_coords(self, coordinates):
         ts, states = jnp.split(t2j(coordinates), [1], axis=1)
+        if self.is_parametric: 
+            states = states[..., self.non_parametric_state_dims]
+
         value_gradients = self.get_values_gradient(states, ts)
         return value_gradients
     
     def value_from_coords(self, coordinates):
         # FIXME: Temp to convert to cuda, should be fixed further upstream
         ts, states = jnp.split(t2j(coordinates.to('cuda')), [1], axis=1)
+        if self.is_parametric: 
+            states = states[..., self.non_parametric_state_dims]
+
         values = self.get_values(states, ts)
         return j2t(values)

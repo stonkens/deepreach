@@ -26,6 +26,18 @@ from utils.comparisons import GroundTruthHJSolution
 from dynamics import dynamics_hjr
 import inspect
 
+def parameter_list_to_suffix(parameter_list):
+    parameter_suffix = ""
+
+    if parameter_list is None: 
+        return parameter_suffix 
+    
+    parameter_suffix += "_"
+    for param in parameter_list: 
+        parameter_suffix += str(param) + "p"
+
+    return parameter_suffix
+
 class Experiment(ABC):
     def __init__(self, model, dataset, experiment_dir, use_wandb, device, validation_dict={}):
         """
@@ -41,81 +53,126 @@ class Experiment(ABC):
         self.experiment_dir = experiment_dir
         self.use_wandb = use_wandb
         self.device = device
-        self.validation_metrics = []
-        self.visual_only_validation_metrics = []
+
+        self.rollout_batch_size = 5000
+        self.visual_rollout_batch_size = 20 
+
         # self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.01, device=self.device)
-        self.safety_plot_validation = VisualizeSafeSet2D(self.dataset, validation_dict)
-        self.validation_metrics.append(self.safety_plot_validation)
-        if self.dataset.dynamics.state_dim <= 5:
-            # Generate ground truth for the validation metrics
-            # TODO: Move this into GroundTruthHJSolution initialization
-            dynamics_class_name = self.dataset.dynamics.__class__.__name__
-            dynamics_class = getattr(dynamics_hjr, dynamics_class_name)
-            dynamics_params = inspect.signature(dynamics_class).parameters
-            dynamics_args = {argname: getattr(self.dataset.dynamics, argname) for argname in dynamics_params 
-                             if hasattr(self.dataset.dynamics, argname)}
-            dynamics_args['tMin'] = self.dataset.tMin
-            dynamics_args['tMax'] = self.dataset.tMax
-            hj_dyn = dynamics_class(self.dataset.dynamics, **dynamics_args)
-            gt = GroundTruthHJSolution(hj_dyn)
-            
-            # Visualize 2D safe set for ground truth (for comparison)
-            model_eval_gt = lambda coords: gt.value_from_coords(coords)
-            log_initial = VisualizeSafeSet2D(self.dataset, validation_dict)(model_eval_gt, None)
-            log_initial = {key + '_gt': value for key, value in log_initial.items()}
-            log_initial['step'] = 0
-
-            # Rollout of ground truth (large batch size, so no plotting)
-            converged_values_validator = ValueThresholdEvaluatorandValidator(eval_fn = gt.value_from_coords, v_min=0.0, v_max=1.0)
-            validation_dict['fixed_samples_validator'] = converged_values_validator
-            validation_dict['rollout_batch_size'] = 20000
-            gt_rollout = FixedRolloutTrajectoriesHJR(self.dataset, validation_dict, gt)
-            gt_rollout.vf_times = self.dataset.tMax  # FIXME: Temp
-            gt_rollout.rollout_times = self.dataset.tMax  # FIXME: temp
-            trajectory_log = gt_rollout(model_eval_gt, None)
-            for item, value in trajectory_log.items():
-                if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                    log_initial[item + "_gt"] = value
-
-            # Small rollout of ground truth specifically for plotting
-            validation_dict['rollout_batch_size'] = 20
-            gt_rollout_viz = RolloutTrajectoriesWithVisualsHJR(self.dataset, validation_dict, gt)
-            gt_rollout_viz.vf_times = self.dataset.tMax  # FIXME: Temp
-            gt_rollout_viz.rollout_times = self.dataset.tMax  # FIXME: temp
-            trajectory_viz_log = gt_rollout_viz(model_eval_gt, None)
-            for item, value in trajectory_viz_log.items():
-                if isinstance(value, wandb.Image):
-                    log_initial[item + "_gt"] = value
-            
-            if self.use_wandb:
-                wandb.log(log_initial)
-
-            ########### Validation metrics for all iterations ############    
-            self.validation_metrics.append(VisualizeValueDifference2D(self.dataset, validation_dict, gt))
-            
-            safety_metrics = QuantifyBinarySafetyDifference(self.dataset, validation_dict, gt)
-            safety_metrics.eval_states = j2t(gt.grid.states.reshape(-1, gt.grid.ndim))
-            self.validation_metrics.append(safety_metrics)
+        is_parametric = hasattr(self.dataset.dynamics, 'parametric_dims')
         
-        else:
-            safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
-            self.validation_metrics.append(safety_metrics)
+        # Initialize 
+        self.validation_metrics = {} # key: parametric test slice name, value: {"parameter": parameter value list, "metrics": list of callable metrics}
+        self.visual_only_validation_metrics = {} # key: parametric test slice name, value: {"parameter": parameter value list, "metrics": list of callable metrics}
+        if is_parametric: 
+            parametric_test_slices = self.dataset.dynamics.parameter_test_slices()
+            for parametric_test_slice in parametric_test_slices: 
+                parametric_key = str(parametric_test_slice)
+                self.validation_metrics[parametric_key] = {"parameter": parametric_test_slice, "metrics": [VisualizeSafeSet2D(self.dataset, validation_dict, parametric=parametric_test_slice)]}
+                self.visual_only_validation_metrics[parametric_key] = {"parameter": parametric_test_slice, "metrics": []}
+        else: 
+            parametric_test_slices = [None]
+            self.validation_metrics[""] = {"parameter": None, "metrics": [VisualizeSafeSet2D(self.dataset, validation_dict, parametric=parametric_test_slices[0])]}
+            self.visual_only_validation_metrics[""] = {"parameter": None, "metrics": []}
 
-        standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.boundary_fn, v_min=0.0, v_max=2.0)
-        validation_dict['fixed_samples_validator'] = standard_value_validator
-        validation_dict['rollout_batch_size'] = 20000
-        traj_rollout = FixedRolloutTrajectories(self.dataset, validation_dict)
 
-        validation_dict['fixed_samples_validator'] = standard_value_validator
-        validation_dict['rollout_batch_size'] = 20
-        traj_rollout_viz = RolloutTrajectoriesWithVisuals(self.dataset, validation_dict)
+        for parametric_test_slice_num, parametric_test_slice in enumerate(parametric_test_slices):
+            parametric_key = str(parametric_test_slice) if parametric_test_slice is not None else ""
+            parametric_suffix = parameter_list_to_suffix(parametric_test_slice) #"0.0p0.0" #"_" + parametric_key if parametric_test_slice is not None else parametric_key 
+            print("parameter_suffix: ", parametric_suffix)
+            
 
-        if self.dataset.dynamics.state_dim <= 5:
-            traj_rollout.sampling_states = gt_rollout.sampling_states
-            traj_rollout_viz.sampling_states = gt_rollout_viz.sampling_states
+            if (hasattr(self.dataset.dynamics, 'parametric_dims') and (self.dataset.dynamics.state_dim - len(self.dataset.dynamics.parametric_dims) <= 5)) or (self.dataset.dynamics.state_dim <= 5):
+            # if self.dataset.dynamics.state_dim <= 5:
+                # Generate ground truth for the validation metrics
+                # TODO: Move this into GroundTruthHJSolution initialization
+                dynamics_class_name = self.dataset.dynamics.__class__.__name__
+                dynamics_class = getattr(dynamics_hjr, dynamics_class_name)
+                dynamics_params = inspect.signature(dynamics_class).parameters
+                dynamics_args = {argname: getattr(self.dataset.dynamics, argname) for argname in dynamics_params 
+                                if hasattr(self.dataset.dynamics, argname)}
+                dynamics_args['tMin'] = self.dataset.tMin
+                dynamics_args['tMax'] = self.dataset.tMax
 
-        self.validation_metrics.append(traj_rollout)
-        self.visual_only_validation_metrics.append(traj_rollout_viz)
+                if parametric_test_slice is not None: 
+                    curr_dynamics_args = dynamics_args.copy()
+                    for param_num in range(len(self.dataset.dynamics.parametric_dims)): 
+                        curr_dynamics_args[self.dataset.dynamics.parametric_names[param_num]] = parametric_test_slice[param_num]
+
+                    print("Starting parameteric test slice: ", parametric_test_slice)
+                    hj_dyn = dynamics_class(self.dataset.dynamics, **curr_dynamics_args)
+                    gt = GroundTruthHJSolution(hj_dyn)
+                    print("Finished parameteric test slice: ", parametric_test_slice)
+                else: 
+                    hj_dyn = dynamics_class(self.dataset.dynamics, **dynamics_args)
+                    gt = GroundTruthHJSolution(hj_dyn)
+            
+                # Visualize 2D safe set for ground truth (for comparison)
+                model_eval_gt = lambda coords: gt.value_from_coords(coords)
+                log_initial = VisualizeSafeSet2DHJR(self.dataset, validation_dict, parametric=parametric_test_slice)(model_eval_gt, None)
+                log_initial = {key + '_gt' + parametric_suffix: value for key, value in log_initial.items()}
+                log_initial['step'] = 0
+
+                print("Starting GT rollouts")
+
+                # Rollout of ground truth (large batch size, so no plotting)
+                converged_values_validator = ValueThresholdEvaluatorandValidator(eval_fn = gt.value_from_coords, v_min=0.0, v_max=1.0)
+                validation_dict['fixed_samples_validator'] = converged_values_validator
+                validation_dict['rollout_batch_size'] = self.rollout_batch_size
+                gt_rollout = FixedRolloutTrajectoriesHJR(self.dataset, validation_dict, gt)
+                gt_rollout.vf_times = self.dataset.tMax  # FIXME: Temp
+                gt_rollout.rollout_times = self.dataset.tMax  # FIXME: temp
+                trajectory_log = gt_rollout(model_eval_gt, None)
+                for item, value in trajectory_log.items():
+                    if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                        log_initial[item + "_gt" + parametric_suffix] = value
+
+                print("Starting GT visual rollouts")
+                
+                # Small rollout of ground truth specifically for plotting
+                validation_dict['rollout_batch_size'] = self.visual_rollout_batch_size
+                gt_rollout_viz = RolloutTrajectoriesWithVisualsHJR(self.dataset, validation_dict, gt)
+                gt_rollout_viz.vf_times = self.dataset.tMax  # FIXME: Temp
+                gt_rollout_viz.rollout_times = self.dataset.tMax  # FIXME: temp
+                trajectory_viz_log = gt_rollout_viz(model_eval_gt, None)
+                for item, value in trajectory_viz_log.items():
+                    if isinstance(value, wandb.Image):
+                        log_initial[item + "_gt" + parametric_suffix] = value
+                
+                if self.use_wandb:
+                    wandb.log(log_initial)
+                    print("Wandb should've updated by now...")
+
+                ########### Validation metrics for all iterations ############    
+                self.validation_metrics[parametric_key]["metrics"].append(VisualizeValueDifference2D(self.dataset, validation_dict, gt, parametric=parametric_test_slice))
+                
+                print("Adding Binary Safety Difference Metric")
+                safety_metrics = QuantifyBinarySafetyDifference(self.dataset, validation_dict, gt, parametric=parametric_test_slice)
+                if is_parametric: 
+                    safety_metrics.eval_states[..., self.dataset.dynamics.state_dims] = j2t(gt.grid.states.reshape(-1, gt.grid.ndim)).to(safety_metrics.eval_states.device)
+                else: 
+                    safety_metrics.eval_states = j2t(gt.grid.states.reshape(-1, gt.grid.ndim))
+                self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
+        
+            else:
+                safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
+                self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
+
+            print("Just adding remaining metrics in")
+            standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.boundary_fn, v_min=0.0, v_max=2.0)
+            validation_dict['fixed_samples_validator'] = standard_value_validator
+            validation_dict['rollout_batch_size'] = self.rollout_batch_size
+            traj_rollout = FixedRolloutTrajectories(self.dataset, validation_dict, parametric=parametric_test_slice)
+
+            validation_dict['fixed_samples_validator'] = standard_value_validator
+            validation_dict['rollout_batch_size'] = self.visual_rollout_batch_size 
+            traj_rollout_viz = RolloutTrajectoriesWithVisuals(self.dataset, validation_dict, parametric=parametric_test_slice)
+
+            if (hasattr(self.dataset.dynamics, 'parametric_dims') and (self.dataset.dynamics.state_dim - len(self.dataset.dynamics.parametric_dims) <= 5)) or (self.dataset.dynamics.state_dim <= 5):
+                traj_rollout.sampling_states = gt_rollout.sampling_states
+                traj_rollout_viz.sampling_states = gt_rollout_viz.sampling_states
+
+            self.validation_metrics[parametric_key]["metrics"].append(traj_rollout)
+            self.visual_only_validation_metrics[parametric_key]["metrics"].append(traj_rollout_viz)
 
     @abstractmethod
     def init_special(self):
@@ -149,27 +206,31 @@ class Experiment(ABC):
         learned_model_eval = model_eval
         wandb_log = {'step': epoch}
 
-        if not isinstance(self.validation_metrics, list):
-            self.validation_metrics = [self.validation_metrics]
-        for validation_metric in self.validation_metrics:
-            validation_metric.update_counters()
-            log = validation_metric(learned_model_eval, model_eval_grad)
-            for key, value in log.items():
-                if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
-                    wandb_log[key] = value
-                elif isinstance(value, wandb.Image):
-                    wandb_log[key] = value
-        
-        for validation_metric in self.visual_only_validation_metrics:
-            validation_metric.update_counters()
-            log = validation_metric(learned_model_eval, model_eval_grad)
-            for key, value in log.items():
-                if isinstance(value, wandb.Image):
-                    wandb_log[key] = value
+        for parametric_key in self.validation_metrics.keys(): 
+            parametric_test_slice = self.validation_metrics[parametric_key]["parameter"]
+            parametric_suffix = parameter_list_to_suffix(parametric_test_slice) #"_" + parametric_key if parametric_test_slice is not None else parametric_key
 
-        if self.use_wandb:
-            wandb.log(wandb_log)
-        plt.close()
+            for validation_metric in self.validation_metrics[parametric_key]["metrics"]:
+                validation_metric.update_counters()
+                log = validation_metric(learned_model_eval, model_eval_grad)
+                for key, value in log.items():
+                    key = key + parametric_suffix 
+                    if isinstance(value, float) or (isinstance(value, torch.Tensor) and value.numel() == 1):
+                        wandb_log[key] = value
+                    elif isinstance(value, wandb.Image):
+                        wandb_log[key] = value
+            
+            for validation_metric in self.visual_only_validation_metrics[parametric_key]["metrics"]:
+                validation_metric.update_counters()
+                log = validation_metric(learned_model_eval, model_eval_grad)
+                for key, value in log.items():
+                    key = key + parametric_suffix
+                    if isinstance(value, wandb.Image):
+                        wandb_log[key] = value
+
+            if self.use_wandb:
+                wandb.log(wandb_log)
+            plt.close()
 
         if was_training:
             self.model.train()
@@ -350,6 +411,10 @@ class Experiment(ABC):
                             })
 
                     total_steps += 1
+
+                if hasattr(self.dataset.dynamics, 'parametric_dims') and  use_CSL: 
+                    print("Not Supported yet! Please implement this")
+                    raise NotImplementedError
 
                 # cost-supervised learning (CSL) phase
                 if use_CSL and not self.dataset.pretrain and (epoch-last_CSL_epoch) >= epochs_til_CSL:
@@ -547,7 +612,11 @@ class Experiment(ABC):
                         os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % (epoch+1)))
                     np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % (epoch+1)),
                         np.array(train_losses))
-                    self.validate(epoch=epoch+1)
+                    try: 
+                        self.validate(epoch=epoch+1)
+                    except: 
+                        print("Validation failed .... likely due to plotting issues ?")
+                        
 
         if was_eval:
             self.model.eval()

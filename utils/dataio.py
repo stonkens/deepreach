@@ -35,8 +35,10 @@ class ReachabilityDataset(Dataset):
             # make sure we always have training samples at the initial time
             times[-self.num_src_samples:, 0] = self.tMin
         model_coords = torch.cat((times, model_states), dim=1)        
-        if self.dynamics.input_dim > self.dynamics.state_dim + 1: # temporary workaround for having to deal with dynamics classes for parametrized models with extra inputs
-            model_coords = torch.cat((model_coords, torch.zeros(self.numpoints, self.dynamics.input_dim - self.dynamics.state_dim - 1)), dim=1)      
+        
+        # NOTE: treating the additional parameters just like inputs for now - with the same scaling etc. 
+        # if self.dynamics.input_dim > self.dynamics.state_dim + 1: # temporary workaround for having to deal with dynamics classes for parametrized models with extra inputs
+        #     model_coords = torch.cat((model_coords, torch.zeros(self.numpoints, self.dynamics.input_dim - self.dynamics.state_dim - 1)), dim=1)      
 
         boundary_values = self.dynamics.boundary_fn(self.dynamics.input_to_coord(model_coords)[..., 1:])
         if self.dynamics.loss_type == 'brat_hjivi':
