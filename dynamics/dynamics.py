@@ -1646,10 +1646,10 @@ class Quad2DAttitude_parametric(Dynamics):
     
     def dsdt(self, state, control, disturbance):
         dsdt = torch.zeros_like(state)
-        dsdt[..., 0] = state[..., 2]
-        dsdt[..., 1] = state[..., 3]
-        dsdt[..., 2] = self.gravity * control[..., 0]
-        dsdt[..., 3] = control[..., 1] - self.gravity
+        dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
+        dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
+        dsdt[..., 2] = self.gravity * control[..., 0] + disturbance[..., 2]
+        dsdt[..., 3] = control[..., 1] - self.gravity + disturbance[..., 3]
 
         # No dynamics on the max disturbance changing 
         dsdt[..., 4] = 0 #dsdt[..., 4]
