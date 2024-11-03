@@ -8,6 +8,9 @@ class ControlandDisturbanceAffineDynamics(hj.dynamics.ControlAndDisturbanceAffin
         self.torch_dynamics = torch_dynamics
         self.tMin = tMin
         self.tMax = tMax
+        self.state_dim = self.torch_dynamics.state_dim
+        self.control_dim = self.torch_dynamics.control_dim
+        self.disturbance_dim = self.torch_dynamics.disturbance_dim
         self.periodic_dims = self.torch_dynamics.periodic_dims
         super().__init__("max", "min", control_space, disturbance_space)
 

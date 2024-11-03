@@ -312,6 +312,9 @@ class Air3D(ControlandDisturbanceAffineDynamics):
         self.evader_omega_max = evader_omega_max
         self.pursuer_omega_max = pursuer_omega_max
         self.angle_alpha_factor = angle_alpha_factor
+        from utils.boundary_functions import InputSet
+        self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+        self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
         super().__init__(
             loss_type='brt_hjivi', set_mode='avoid',
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=1,
