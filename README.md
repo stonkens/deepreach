@@ -67,7 +67,7 @@ Systems are defined in `dynamics/dynamics.py` and inherit from the abstract `Dyn
 * `state_test_range(self)`, which specifies the state space that will be visualized in training plots
 * `dsdt(self, state, control, disturbance)`, which implements the forward dynamics
 * `boundary_fn(self, state)`,  which implements the boundary function that implicitly represents the target set
-* `hamiltonian(self, state, dvds)`, which implements the system's hamiltonian
+* `hamiltonian(self, state, time, dvds)`, which implements the system's hamiltonian
 * `plot_config(self)`, which specifies the state slices and axes visualized in training plots
 
 ## Citation
