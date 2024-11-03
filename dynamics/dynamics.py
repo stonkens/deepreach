@@ -149,6 +149,27 @@ class Dynamics(ABC):
     @abstractmethod
     def plot_config(self):
         raise NotImplementedError
+    
+
+class ControlandDisturbanceAffineDynamics(Dynamics):
+    def dsdt(self, state, control, disturbance, time):
+        dsdt = self.open_loop_dynamics(state, time)
+        dsdt += torch.bmm(self.control_jacobian(state, time), control.unsqueeze(-1)).squeeze(-1)
+        dsdt += torch.bmm(self.disturbance_jacobian(state, time), disturbance.unsqueeze(-1)).squeeze(-1)
+        return dsdt
+
+    @abstractmethod
+    def open_loop_dynamics(self, state, time):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def control_jacobian(self, state, time):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def disturbance_jacobian(self, state, time):
+        raise NotImplementedError
+
 
 class ParameterizedVertDrone2D(Dynamics):
     def __init__(self, gravity:float, input_multiplier_max:float, input_magnitude_max:float):
@@ -282,7 +303,7 @@ class SimpleAir3D(Dynamics):
         }
 
 
-class Air3D(Dynamics):
+class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
                  pursuer_omega_max:float, angle_alpha_factor:float):
         self.collisionR = collisionR
@@ -309,13 +330,27 @@ class Air3D(Dynamics):
             [-10, 10],
             [-math.pi, math.pi],
         ]
+    
+    def open_loop_dynamics(self, state, time):
+        open_loop_dynamics = torch.zeros_like(state)
+        open_loop_dynamics[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2])
+        open_loop_dynamics[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) 
+        open_loop_dynamics[..., 2] = 0
+        return open_loop_dynamics
+    
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        control_jacobian[..., 0, 0] = state[..., 1]
+        control_jacobian[..., 1, 0] = -state[..., 0]
+        control_jacobian[..., 2, 0] = -1.0
+        return control_jacobian
 
-    def dsdt(self, state, control, disturbance, time):
-        dsdt = torch.zeros_like(state)
-        dsdt[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
-        dsdt[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
-        dsdt[..., 2] = disturbance[..., 0] - control[..., 0]
-        return dsdt
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        disturbance_jacobian[..., 0, 0] = 0
+        disturbance_jacobian[..., 1, 0] = 0
+        disturbance_jacobian[..., 2, 0] = 1.0
+        return disturbance_jacobian
 
     def boundary_fn(self, state):
         return torch.norm(state[..., :2], dim=-1) - self.collisionR
@@ -327,6 +362,10 @@ class Air3D(Dynamics):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
     def hamiltonian(self, state, time, dvds):
+        # opt_control = self.optimal_control(state, dvds).squeeze(0)
+        # opt_disturbance = self.optimal_disturbance(state, dvds).squeeze(0)
+        # flow = self.dsdt(state.squeeze(0), opt_control, opt_disturbance, time.squeeze(0))
+        # return torch.sum(flow*dvds, dim=-1)
         ham = self.evader_omega_max * torch.abs(dvds[..., 0] * state[..., 1] - 
                                                 dvds[..., 1] * state[..., 0] - 
                                                 dvds[..., 2])  # Control component
@@ -334,12 +373,15 @@ class Air3D(Dynamics):
         ham = ham + ((self.pursuer_speed * torch.cos(state[..., 2]) - self.evader_speed) * dvds[..., 0] + 
                      (self.pursuer_speed * torch.sin(state[..., 2]) * dvds[..., 1]))  # Constant component
         return ham
+
     
     def optimal_control(self, state, dvds):
         det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
+        # return torch.where(det >= 0, self.evader_omega_max, -self.evader_omega_max)[..., None]
         return (self.evader_omega_max * torch.sign(det))[..., None]
     
     def optimal_disturbance(self, state, dvds):
+        # return torch.where(dvds[..., 2] >= 0, -self.pursuer_omega_max, self.pursuer_omega_max)[..., None]
         return (-self.pursuer_omega_max * torch.sign(dvds[..., 2]))[..., None]
 
     def plot_config(self):
