@@ -32,7 +32,7 @@ if use_wandb:
 mode = p.parse_known_args()[0].mode
 
 # load dynamics_class choices dynamically from dynamics module
-dynamics_classes_dict = {name: clss for name, clss in inspect.getmembers(dynamics, inspect.isclass) if clss.__bases__[0] == dynamics.Dynamics}
+dynamics_classes_dict = {name: clss for name, clss in inspect.getmembers(dynamics, inspect.isclass) if (clss.__bases__[0] == dynamics.Dynamics or clss.__bases__[0] == dynamics.ControlandDisturbanceAffineDynamics)}
 p.add_argument('--dynamics_class', type=str, required=True, choices=dynamics_classes_dict.keys(), help='Dynamics class to use.')
 # load special dynamics_class arguments dynamically from chosen dynamics class
 dynamics_class = dynamics_classes_dict[p.parse_known_args()[0].dynamics_class]
@@ -59,12 +59,12 @@ if (mode == 'all') or (mode == 'train'):
         p.add_argument('--' + param, type=experiment_params[param].annotation, required=True, help='special experiment_class argument')
 
     # simulation data source options
-    p.add_argument('--numpoints', type=int, default=65000, help='Number of points in simulation data source __getitem__.')
+    p.add_argument('--numpoints', type=int, default=65000, help='Number of points in simulation data source __getitem__.')  # sensitive number (lower means faster so less points)
     p.add_argument('--pretrain', action='store_true', default=False, required=False, help='Pretrain dirichlet conditions')
     p.add_argument('--pretrain_iters', type=int, default=2000, required=False, help='Number of pretrain iterations')
     p.add_argument('--tMin', type=float, default=0.0, required=False, help='Start time of the simulation')
     p.add_argument('--tMax', type=float, default=1.0, required=False, help='End time of the simulation')
-    p.add_argument('--counter_start', type=int, default=0, required=False, help='Defines the initial time for the curriculum training')
+    p.add_argument('--counter_start', type=int, default=0, required=False, help='Defines the initial time for the curriculum training')  # percentage of epoch you are now compared to the entire
     p.add_argument('--counter_end', type=int, default=-1, required=False, help='Defines the linear step for curriculum training starting from the initial time')
     p.add_argument('--num_src_samples', type=int, default=1000, required=False, help='Number of source samples (initial-time samples) at each time step')
     p.add_argument('--num_target_samples', type=int, default=0, required=False, help='Number of samples inside the target set')

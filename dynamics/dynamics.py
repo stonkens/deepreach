@@ -13,6 +13,7 @@ class Dynamics(ABC):
     loss_type:str, set_mode:str, 
     state_dim:int, input_dim:int, 
     control_dim:int, disturbance_dim:int, 
+    periodic_dims:list,
     state_mean:list, state_var:list, 
     value_mean:float, value_var:float, value_normto:float, 
     deepreach_model:str):
@@ -22,6 +23,13 @@ class Dynamics(ABC):
         self.input_dim = input_dim
         self.control_dim = control_dim
         self.disturbance_dim = disturbance_dim
+        self.periodic_dims = periodic_dims
+        if self.periodic_dims is None:
+            self.periodic_dims = []
+        elif isinstance(self.periodic_dims, int):
+            self.periodic_dims = [self.periodic_dims]
+        assert isinstance(self.periodic_dims, list), 'periodic_dims must be a list'
+
         self.state_mean = torch.tensor(state_mean) 
         self.state_var = torch.tensor(state_var)
         self.state_bounds = torch.stack([self.state_mean - self.state_var, self.state_mean + self.state_var], dim=-1)
@@ -104,12 +112,14 @@ class Dynamics(ABC):
     def state_test_range(self):
         raise NotImplementedError
 
-    @abstractmethod
     def equivalent_wrapped_state(self, state):
-        raise NotImplementedError
+        wrapped_state = torch.clone(state)
+        for periodic_dim in self.periodic_dims:
+            wrapped_state[..., periodic_dim] = (wrapped_state[..., periodic_dim] + math.pi) % (2*math.pi) - math.pi
+        return wrapped_state 
 
     @abstractmethod
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         raise NotImplementedError
     
     @abstractmethod
@@ -125,7 +135,7 @@ class Dynamics(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         raise NotImplementedError
 
     @abstractmethod
@@ -139,6 +149,27 @@ class Dynamics(ABC):
     @abstractmethod
     def plot_config(self):
         raise NotImplementedError
+    
+
+class ControlandDisturbanceAffineDynamics(Dynamics):
+    def dsdt(self, state, control, disturbance, time):
+        dsdt = self.open_loop_dynamics(state, time)
+        dsdt += torch.bmm(self.control_jacobian(state, time), control.unsqueeze(-1)).squeeze(-1)
+        dsdt += torch.bmm(self.disturbance_jacobian(state, time), disturbance.unsqueeze(-1)).squeeze(-1)
+        return dsdt
+
+    @abstractmethod
+    def open_loop_dynamics(self, state, time):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def control_jacobian(self, state, time):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def disturbance_jacobian(self, state, time):
+        raise NotImplementedError
+
 
 class ParameterizedVertDrone2D(Dynamics):
     def __init__(self, gravity:float, input_multiplier_max:float, input_magnitude_max:float):
@@ -150,6 +181,7 @@ class ParameterizedVertDrone2D(Dynamics):
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=0,
             state_mean=[0, 1.5, self.input_multiplier_max/2], # v, z, k
             state_var=[4, 2, self.input_multiplier_max/2],    # v, z, k
+            periodic_dims=[],
             value_mean=0.25,
             value_var=0.5,
             value_normto=0.02,
@@ -163,15 +195,11 @@ class ParameterizedVertDrone2D(Dynamics):
             [0, self.input_multiplier_max], # k
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        return wrapped_state
-
     # ParameterizedVertDrone2D dynamics
     # \dot v = k*u - g
     # \dot z = v
     # \dot k = 0
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2]*control[..., 0] - self.gravity
         dsdt[..., 1] = state[..., 0]
@@ -187,7 +215,7 @@ class ParameterizedVertDrone2D(Dynamics):
     def cost_fn(self, state_traj):
         raise NotImplementedError
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         return state[..., 2]*torch.abs(dvds[..., 0]*self.input_magnitude_max) \
                 - dvds[..., 0]*self.gravity \
                 + dvds[..., 1]*state[..., 0]
@@ -207,7 +235,7 @@ class ParameterizedVertDrone2D(Dynamics):
             'z_axis_idx': 2,
         }
 
-class Air3D(Dynamics):
+class SimpleAir3D(Dynamics):
     def __init__(self, collisionR:float, velocity:float, omega_max:float, angle_alpha_factor:float):
         self.collisionR = collisionR
         self.velocity = velocity
@@ -218,6 +246,7 @@ class Air3D(Dynamics):
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=1,
             state_mean=[0, 0, 0], 
             state_var=[1, 1, self.angle_alpha_factor*math.pi],
+            periodic_dims=[2],
             value_mean=0.25, 
             value_var=0.5, 
             value_normto=0.02,
@@ -231,16 +260,11 @@ class Air3D(Dynamics):
             [-math.pi, math.pi],
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
-
     # Air3D dynamics
     # \dot x    = -v + v \cos \psi + u y
     # \dot y    = v \sin \psi - u x
     # \dot \psi = d - u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = -self.velocity + self.velocity*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
@@ -256,7 +280,7 @@ class Air3D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         ham = self.omega_max * torch.abs(dvds[..., 0] * state[..., 1] - dvds[..., 1] * state[..., 0] - dvds[..., 2])  # Control component
         ham = ham - self.omega_max * torch.abs(dvds[..., 2])  # Disturbance component
         ham = ham + (self.velocity * (torch.cos(state[..., 2]) - 1.0) * dvds[..., 0]) + (self.velocity * torch.sin(state[..., 2]) * dvds[..., 1])  # Constant component
@@ -278,6 +302,101 @@ class Air3D(Dynamics):
             'z_axis_idx': 2,
         }
 
+
+class Air3D(ControlandDisturbanceAffineDynamics):
+    def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
+                 pursuer_omega_max:float, angle_alpha_factor:float):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.pursuer_omega_max = pursuer_omega_max
+        self.angle_alpha_factor = angle_alpha_factor
+        from utils.boundary_functions import InputSet
+        self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+        self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid',
+            state_dim=3, input_dim=4, control_dim=1, disturbance_dim=1,
+            state_mean=[7, 0, 0], 
+            state_var=[13, 10, self.angle_alpha_factor*math.pi],
+            periodic_dims=[2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact",
+        )
+
+    def state_test_range(self):
+        return [
+            [-6, 20],
+            [-10, 10],
+            [-math.pi, math.pi],
+        ]
+    
+    def open_loop_dynamics(self, state, time):
+        open_loop_dynamics = torch.zeros_like(state)
+        open_loop_dynamics[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2])
+        open_loop_dynamics[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) 
+        open_loop_dynamics[..., 2] = 0
+        return open_loop_dynamics
+    
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        control_jacobian[..., 0, 0] = state[..., 1]
+        control_jacobian[..., 1, 0] = -state[..., 0]
+        control_jacobian[..., 2, 0] = -1.0
+        return control_jacobian
+
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        disturbance_jacobian[..., 0, 0] = 0
+        disturbance_jacobian[..., 1, 0] = 0
+        disturbance_jacobian[..., 2, 0] = 1.0
+        return disturbance_jacobian
+
+    def boundary_fn(self, state):
+        return torch.norm(state[..., :2], dim=-1) - self.collisionR
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, time, dvds):
+        # opt_control = self.optimal_control(state, dvds).squeeze(0)
+        # opt_disturbance = self.optimal_disturbance(state, dvds).squeeze(0)
+        # flow = self.dsdt(state.squeeze(0), opt_control, opt_disturbance, time.squeeze(0))
+        # return torch.sum(flow*dvds, dim=-1)
+        ham = self.evader_omega_max * torch.abs(dvds[..., 0] * state[..., 1] - 
+                                                dvds[..., 1] * state[..., 0] - 
+                                                dvds[..., 2])  # Control component
+        ham = ham - self.pursuer_omega_max * torch.abs(dvds[..., 2])  # Disturbance component
+        ham = ham + ((self.pursuer_speed * torch.cos(state[..., 2]) - self.evader_speed) * dvds[..., 0] + 
+                     (self.pursuer_speed * torch.sin(state[..., 2]) * dvds[..., 1]))  # Constant component
+        return ham
+
+    
+    def optimal_control(self, state, dvds):
+        det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
+        # return torch.where(det >= 0, self.evader_omega_max, -self.evader_omega_max)[..., None]
+        return (self.evader_omega_max * torch.sign(det))[..., None]
+    
+    def optimal_disturbance(self, state, dvds):
+        # return torch.where(dvds[..., 2] >= 0, -self.pursuer_omega_max, self.pursuer_omega_max)[..., None]
+        return (-self.pursuer_omega_max * torch.sign(dvds[..., 2]))[..., None]
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0],
+            'state_labels': ['x', 'y', 'theta'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': 2,
+        }
+
+
 class Dubins3D(Dynamics):
     def __init__(self, goalR:float, velocity:float, omega_max:float, angle_alpha_factor:float, set_mode:str, freeze_model: bool):
         self.goalR = goalR
@@ -290,6 +409,7 @@ class Dubins3D(Dynamics):
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=0,
             state_mean=[0, 0, 0], 
             state_var=[1, 1, self.angle_alpha_factor*math.pi],
+            periodic_dims=[2],
             value_mean=0.25, 
             value_var=0.5, 
             value_normto=0.02,
@@ -302,17 +422,12 @@ class Dubins3D(Dynamics):
             [-1, 1],
             [-math.pi, math.pi],
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
         
     # Dubins3D dynamics
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = self.velocity*torch.cos(state[..., 2])
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 2])
@@ -328,7 +443,7 @@ class Dubins3D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         if self.freeze_model:
             raise NotImplementedError
         if self.set_mode == 'reach':
@@ -370,6 +485,7 @@ class Dubins3DParameterizedDisturbance(Dynamics):
             state_dim=4, input_dim=5, control_dim=1, disturbance_dim=1,
             state_mean=[0, 0, 0, self.max_disturbance/2], 
             state_var=[1, 1, self.angle_alpha_factor*math.pi, self.max_disturbance/2],
+            periodic_dims=[2],
             value_mean=0.25, 
             value_var=0.5, 
             value_normto=0.02,
@@ -383,18 +499,13 @@ class Dubins3DParameterizedDisturbance(Dynamics):
             [-math.pi, math.pi],
             [0, self.max_disturbance],  # disturbance term
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
         
     # Dubins3D dynamics
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
     # \dot \beta = 0
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         if self.freeze_model:
             raise NotImplementedError
         dsdt = torch.zeros_like(state)
@@ -413,7 +524,7 @@ class Dubins3DParameterizedDisturbance(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         if self.freeze_model:
             raise NotImplementedError
         if self.set_mode == 'reach':
@@ -470,6 +581,7 @@ class Dubins4D(Dynamics):
             state_dim=14, input_dim=15,  control_dim=2, disturbance_dim=0,
             state_mean=[xMean, yMean, thetaMean, vMean, xMean, yMean, aMean, aMean, oMean, oMean, aMean, aMean, oMean, oMean],
             state_var=[xVar, yVar, thetaVar, vVar, xVar, yVar, aVar, aVar, oVar, oVar, aVar, aVar, oVar, oVar],
+            periodic_dims=[2],
             value_mean=13,
             value_var=14,
             value_normto=0.02,
@@ -494,11 +606,6 @@ class Dubins4D(Dynamics):
             [-1, 1],
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
-
     def boundary_fn(self, state):
         return torch.norm(state[..., 0:2] - state[..., 4:6], dim=-1) - self.collisionR
 
@@ -508,10 +615,10 @@ class Dubins4D(Dynamics):
     def cost_fn(self, state_traj):
         raise NotImplementedError
 
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         raise NotImplementedError
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         raise NotImplementedError
 
     def optimal_control(self, state, dvds):
@@ -544,6 +651,7 @@ class Quad2DAttitude(Dynamics):
             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
             state_mean=[0., 1.3, 0, 0],
             state_var=[5., 1.5, 2, 2],
+            periodic_dims=[],
             value_mean=0.2,
             value_var=0.5,
             value_normto=0.02,
@@ -558,11 +666,7 @@ class Quad2DAttitude(Dynamics):
             [-1.4, 1.4]
         ]
     
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        return wrapped_state
-    
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
         dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
@@ -579,10 +683,10 @@ class Quad2DAttitude(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         optimal_control = self.optimal_control(state, dvds)
         optimal_disturbance = self.optimal_disturbance(state, dvds)
-        flow = self.dsdt(state, optimal_control, optimal_disturbance)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
         return torch.sum(flow*dvds, dim=-1)
     
     def optimal_control(self, state, dvds):
@@ -675,6 +779,7 @@ class NarrowPassage(Dynamics):
                 8.0, 3.8, 1.2*math.pi, 4.0, 1.2*0.3*math.pi, 
                 8.0, 3.8, 1.2*math.pi, 4.0, 1.2*0.3*math.pi,
             ],
+            periodic_dims=[2, 4, 7, 9],
             value_mean=0.25*8.0,
             value_var=0.5*8.0,
             value_normto=0.02,
@@ -695,14 +800,6 @@ class NarrowPassage(Dynamics):
             [-0.3*math.pi, 0.3*math.pi],
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 4] = (wrapped_state[..., 4] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 7] = (wrapped_state[..., 7] + math.pi) % (2*math.pi) - math.pi 
-        wrapped_state[..., 9] = (wrapped_state[..., 9] + math.pi) % (2*math.pi) - math.pi 
-        return wrapped_state 
-
     # NarrowPassage dynamics
     # \dot x   = v * cos(th)
     # \dot y   = v * sin(th)
@@ -714,7 +811,7 @@ class NarrowPassage(Dynamics):
     # \dot th  = ...
     # \dot v   = ...
     # \dot phi = ...
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 3]*torch.cos(state[..., 2])
         dsdt[..., 1] = state[..., 3]*torch.sin(state[..., 2])
@@ -779,7 +876,7 @@ class NarrowPassage(Dynamics):
             avoid_values = self.avoid_fn(state_traj)
             return torch.min(torch.maximum(reach_values, torch.cummax(-avoid_values, dim=-1).values), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         optimal_control = self.optimal_control(state, dvds)
         return state[..., 3] * torch.cos(state[..., 2]) * dvds[..., 0] + \
                state[..., 3] * torch.sin(state[..., 2]) * dvds[..., 1] + \
@@ -841,6 +938,7 @@ class ReachAvoidRocketLanding(Dynamics):
             state_dim=6, input_dim=7, control_dim=2, disturbance_dim=0,
             state_mean=[0.0, 80.0, 0.0, 0.0, 0.0, 0.0],
             state_var=[150.0, 70.0, 1.2*math.pi, 200.0, 200.0, 10.0],
+            periodic_dims=[2],
             value_mean=0.0,
             value_var=1.0,
             value_normto=0.02,
@@ -857,18 +955,13 @@ class ReachAvoidRocketLanding(Dynamics):
             [-10, 10],
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state 
-
     # \dot x = v_x
     # \dot y = v_y
     # \dot th = w
     # \dot v_x = u1 * cos(th) - u2 sin(th)
     # \dot v_y = u1 * sin(th) + u2 cos(th) - 9.81
     # \dot w = 0.3 * u1
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 3]
         dsdt[..., 1] = state[..., 4]
@@ -925,7 +1018,7 @@ class ReachAvoidRocketLanding(Dynamics):
         avoid_values = self.avoid_fn(state_traj)
         return torch.min(torch.maximum(reach_values, torch.cummax(-avoid_values, dim=-1).values), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Control Hamiltonian
         u1_coeff = dvds[..., 3] * torch.cos(state[..., 2]) + dvds[..., 4] * torch.sin(state[..., 2]) + 0.3 * dvds[..., 5]
         u2_coeff = -dvds[..., 3] * torch.sin(state[..., 2]) + dvds[..., 4] * torch.cos(state[..., 2])
@@ -962,6 +1055,7 @@ class RocketLanding(Dynamics):
             state_dim=6, input_dim=8, control_dim=2, disturbance_dim=0,
             state_mean=[0.0, 80.0, 0.0, 0.0, 0.0, 0.0],
             state_var=[150.0, 70.0, 1.2*math.pi, 200.0, 200.0, 10.0],
+            periodic_dims=[2],
             value_mean=0.0,
             value_var=1.0,
             value_normto=0.02,
@@ -1018,18 +1112,13 @@ class RocketLanding(Dynamics):
             [-10, 10],
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 2] = (wrapped_state[..., 2] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state 
-
     # \dot x = v_x
     # \dot y = v_y
     # \dot th = w
     # \dot v_x = u1 * cos(th) - u2 sin(th)
     # \dot v_y = u1 * sin(th) + u2 cos(th) - 9.81
     # \dot w = 0.3 * u1
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 3]
         dsdt[..., 1] = state[..., 4]
@@ -1061,7 +1150,7 @@ class RocketLanding(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Control Hamiltonian
         u1_coeff = dvds[..., 3] * torch.cos(state[..., 2]) + dvds[..., 4] * torch.sin(state[..., 2]) + 0.3 * dvds[..., 5]
         u2_coeff = -dvds[..., 3] * torch.sin(state[..., 2]) + dvds[..., 4] * torch.cos(state[..., 2])
@@ -1109,6 +1198,7 @@ class Quadrotor(Dynamics):
             state_dim=13, input_dim=14, control_dim=4, disturbance_dim=0,
             state_mean=[0 for i in range(13)], 
             state_var=[1.5, 1.5, 1.5, 1, 1, 1, 1, 10, 10 ,10 ,10 ,10 ,10],
+            periodic_dims=[],
             value_mean=(math.sqrt(1.5**2+1.5**2+1.5**2)-2*self.collisionR)/2, 
             value_var=math.sqrt(1.5**2+1.5**2+1.5**2), 
             value_normto=0.02,
@@ -1132,15 +1222,11 @@ class Quadrotor(Dynamics):
             [-10, 10],
         ]
 
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        return wrapped_state
-
     # Dubins3D dynamics
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         qw = state[..., 3] * 1.0
         qx = state[..., 4] * 1.0
         qy = state[..., 5] * 1.0
@@ -1182,7 +1268,7 @@ class Quadrotor(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         if self.set_mode == 'reach':
             raise NotImplementedError
 
@@ -1279,6 +1365,7 @@ class MultiVehicleCollision(Dynamics):
         super().__init__(
             loss_type='brt_hjivi', set_mode='avoid',
             state_dim=9, input_dim=10, control_dim=3, disturbance_dim=0,
+            periodic_dims=[6, 7, 8],
             state_mean=[
                 0, 0,
                 0, 0, 
@@ -1304,19 +1391,12 @@ class MultiVehicleCollision(Dynamics):
             [-1, 1], [-1, 1],
             [-math.pi, math.pi], [-math.pi, math.pi], [-math.pi, math.pi],           
         ]
-
-    def equivalent_wrapped_state(self, state):
-        wrapped_state = torch.clone(state)
-        wrapped_state[..., 6] = (wrapped_state[..., 6] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 7] = (wrapped_state[..., 7] + math.pi) % (2*math.pi) - math.pi
-        wrapped_state[..., 8] = (wrapped_state[..., 8] + math.pi) % (2*math.pi) - math.pi
-        return wrapped_state
         
     # dynamics (per car)
     # \dot x    = v \cos \theta
     # \dot y    = v \sin \theta
     # \dot \theta = u
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = self.velocity*torch.cos(state[..., 6])
         dsdt[..., 1] = self.velocity*torch.sin(state[..., 6])
@@ -1349,7 +1429,7 @@ class MultiVehicleCollision(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Compute the hamiltonian for the ego vehicle
         ham = self.velocity*(torch.cos(state[..., 6]) * dvds[..., 0] + torch.sin(state[..., 6]) * dvds[..., 1]) + self.omega_max * torch.abs(dvds[..., 6])
         # Hamiltonian effect due to other vehicles

@@ -3,6 +3,12 @@ import torch.nn.functional as F
 import jax.numpy as jnp
 
 
+class InputSet:
+    def __init__(self, lo, hi):
+        self.lo = lo
+        self.hi = hi
+
+
 class Obstacle:
     def __init__(self, state_idis, padding, device='cpu') -> None:
         self.state_idis = state_idis
@@ -26,6 +32,7 @@ class Circle(Obstacle):
         obstacle_sdf = torch.norm(self.center - x[..., self.state_idis], dim=-1) - self.radius - self.padding
         return obstacle_sdf
 
+
 class Rectangle(Obstacle):
     def __init__(self, state_idis, min_val, max_val, padding=0.0, device='cpu') -> None:
         super().__init__(state_idis, padding, device=device)
@@ -42,6 +49,7 @@ class Rectangle(Obstacle):
         obstacle_sdf = (torch.where(torch.all(max_dist_per_dim < 0.0, dim=-1), inside_obstacle, outside_obstacle) 
                         - self.padding)
         return obstacle_sdf
+
 
 class Boundary(Obstacle):
     def __init__(self, state_idis, min_val, max_val, padding=0.0, device='cpu') -> None:
@@ -77,6 +85,7 @@ class ObstacleJAX:
         self.state_idis = state_idis
         self.padding = padding
 
+
 class CircleJAX(ObstacleJAX):
     def __init__(self, state_idis, radius, center, padding=0.0) -> None:
         super().__init__(state_idis, padding)
@@ -86,6 +95,7 @@ class CircleJAX(ObstacleJAX):
     def obstacle_sdf(self, x):
         obstacle_sdf = jnp.linalg.norm(self.center - x[..., self.state_idis], axis=-1) - self.radius - self.padding
         return obstacle_sdf
+
 
 class RectangleJAX(ObstacleJAX):
     def __init__(self, state_idis, min_val, max_val, padding=0.0) -> None:
@@ -102,6 +112,7 @@ class RectangleJAX(ObstacleJAX):
         obstacle_sdf = (jnp.where(jnp.all(max_dist_per_dim < 0.0, axis=-1), inside_obstacle, outside_obstacle) 
                         - self.padding)
         return obstacle_sdf
+
 
 class BoundaryJAX(ObstacleJAX):
     def __init__(self, state_idis, min_val, max_val, padding=0.0) -> None:
