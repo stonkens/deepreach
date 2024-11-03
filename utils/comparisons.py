@@ -6,6 +6,9 @@ from hj_reachability.finite_differences import upwind_first
 
 
 class GroundTruthHJSolution:
+    """
+    Ground truth solution using Dynamic Programming, only for 5 state dimensions or less.
+    """
     def __init__(self, hj_dynamics):
         import hj_reachability as hj
         import jax.numpy as jnp
@@ -30,7 +33,7 @@ class GroundTruthHJSolution:
         self.value_functions = hj.solve(solver_settings, self.hj_dynamics, self.grid, self.times, 
                                         sdf_values, progress_bar=True)
         self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
-        self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0) * self.grid.ndim)
+        self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0, 0, 0, 0))
         self.optimal_control_and_disturbance_f = jax.vmap(self.hj_dynamics.optimal_control_and_disturbance, in_axes=(0, 0, 0))
         
     def __call__(self, state, time):
