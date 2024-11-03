@@ -18,18 +18,21 @@ class GroundTruthHJSolution:
             self.is_parametric = True 
             self.non_parametric_state_dims = self.hj_dynamics.torch_dynamics.state_dims
 
+        state_mean = self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy()
+        state_var = self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy().copy()
+        for periodic_dim in self.hj_dynamics.periodic_dims:
+            state_var[periodic_dim] = np.pi # Deepreach dynamics might add overlap, ground truth should have pi
+        
         if self.is_parametric:
-            state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy()[self.non_parametric_state_dims])
-            state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy()[self.non_parametric_state_dims])
+            state_mean = state_mean[self.non_parametric_state_dims]
+            state_var = state_var[self.non_parametric_state_dims]
             grid_resolution = tuple([51]) * len(self.non_parametric_state_dims)
         else: 
-            state_mean = jnp.array(self.hj_dynamics.torch_dynamics.state_mean.detach().cpu().numpy())
-            state_var = jnp.array(self.hj_dynamics.torch_dynamics.state_var.detach().cpu().numpy())
             grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
         
-        for periodic_dim in self.hj_dynamics.periodic_dims:
-            state_var[periodic_dim] = np.pi  # Deepreach dynamics might add overlap, ground truth should have pi
-
+        state_mean = jnp.array(state_mean) 
+        state_var = jnp.array(state_var)
+        
         state_hi = state_mean + state_var
         state_lo = state_mean - state_var
         state_domain = hj.sets.Box(lo=state_lo, hi=state_hi)
@@ -49,12 +52,13 @@ class GroundTruthHJSolution:
         self.optimal_control_and_disturbance_f = jax.vmap(self.hj_dynamics.optimal_control_and_disturbance, in_axes=(0, 0, 0))
         
     def __call__(self, state, time):
+        raise NotImplementedError("Broken")
         # Find nearest time
-        def single_compute(state, time):
-            time_idx = jnp.argmin(jnp.abs(jnp.abs(self.times) - jnp.abs(time)))
-            return self.grid.interpolate(self.value_functions[time_idx], state)
-        vectorized_compute = jax.vmap(single_compute, in_axes=(0, 0))
-        return vectorized_compute(state, time)
+        # def single_compute(state, time):
+        #     time_idx = jnp.argmin(jnp.abs(jnp.abs(self.times) - jnp.abs(time)))
+        #     return self.grid.interpolate(self.value_functions[time_idx], state)
+        # vectorized_compute = jax.vmap(single_compute, in_axes=(0, 0))
+        # return vectorized_compute(state, time)
     
     def get_values_gradient(self, states, ts):
         unique_times = jnp.unique(ts)

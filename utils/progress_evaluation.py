@@ -266,7 +266,6 @@ class QuantifyBinarySafety(EvaluationMetric):
         else: 
             eval_states = torch.cartesian_prod(*[torch.linspace(-1, 1, grid_resolution) 
                                                 for _ in range(dataset.dynamics.state_dim)])
-        # FIXME: Does this need to be reshaped?
         self.eval_states = self.dataset.dynamics.state_mean + eval_states * self.dataset.dynamics.state_var
         for periodic_dim in self.dataset.dynamics.periodic_dims:  # TEMP FIX
             self.eval_states[:, periodic_dim] = self.eval_states[:, periodic_dim] / self.dataset.dynamics.angle_alpha_factor
@@ -317,7 +316,6 @@ class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
             - parametric: default None, when specified and the dynamics model is parameteric use those parameters in the eval inputs for model evaluation
         """
         super().__init__(dataset, val_dict, parametric=parametric)
-
         # Set up ground truth eval states - different if model is parametric 
         if hasattr(dataset.dynamics, 'parametric_dims') and parametric is not None:
             self.gt_eval_states = torch.tensor(self.eval_states[..., self.dataset.dynamics.state_dims])
