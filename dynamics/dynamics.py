@@ -158,6 +158,9 @@ class ControlandDisturbanceAffineDynamics(Dynamics):
         dsdt += torch.bmm(self.disturbance_jacobian(state, time), disturbance.unsqueeze(-1)).squeeze(-1)
         return dsdt
 
+    def __call__(self, state, control, disturbance, time):
+        return self.dsdt(state, control, disturbance, time)
+
     @abstractmethod
     def open_loop_dynamics(self, state, time):
         raise NotImplementedError
@@ -313,8 +316,10 @@ class Air3D(ControlandDisturbanceAffineDynamics):
         self.pursuer_omega_max = pursuer_omega_max
         self.angle_alpha_factor = angle_alpha_factor
         from utils.boundary_functions import InputSet
-        self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
-        self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+        self.control_space = InputSet(lo=-torch.Tensor([self.evader_omega_max]), 
+                                      hi=torch.Tensor([self.evader_omega_max]))
+        self.disturbance_space = InputSet(lo=-torch.Tensor([self.pursuer_omega_max]), 
+                                          hi=torch.Tensor([self.pursuer_omega_max]))
         super().__init__(
             loss_type='brt_hjivi', set_mode='avoid',
             state_dim=3, input_dim=4, control_dim=1, disturbance_dim=1,
