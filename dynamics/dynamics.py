@@ -1468,7 +1468,7 @@ class MultiVehicleCollision(Dynamics):
 
 class Drone4D(Dynamics): 
 
-    def __init__(self, gravity: float, min_angle: float, max_angle: float, min_thrust: float, max_thrust: float, 
+    def __init__(self, set_mode:str, gravity: float, min_angle: float, max_angle: float, min_thrust: float, max_thrust: float, 
                 max_pos_y_dist: float, max_pos_z_dist: float, max_vel_y_dist: float, max_vel_z_dist: float): 
 
         # Input bounds
@@ -1502,7 +1502,8 @@ class Drone4D(Dynamics):
             value_mean=0.2,             # NOTE: might want to change
             value_var=0.5,              # NOTE: might want to change
             value_normto=0.02,          # NOTE: might want to change
-            deepreach_model="vanilla" # NOTE: Was "exact" before, "vanilla" worked better on the attitude model with these boundary functions 
+            deepreach_model="vanilla", # NOTE: Was "exact" before, "vanilla" worked better on the attitude model with these boundary functions 
+            periodic_dims=[]
         )
 
 
@@ -1524,7 +1525,7 @@ class Drone4D(Dynamics):
     # \dot vy = u2 sin(u1) + d3
     # \dot vz = u2 cos(u1) - g + d4
     # state = [y, z, vy, vz]
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
         dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
@@ -1542,7 +1543,7 @@ class Drone4D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Compute the hamiltonian for the drone
         # args: state (tensor), dvds (tensor) - derivative of value function wrt state
         # TODO
@@ -1690,7 +1691,8 @@ class Quad2DAttitude_parametric(Dynamics):
             value_mean=0.2,
             value_var=0.5,
             value_normto=0.02,
-            deepreach_model="exact"
+            deepreach_model="exact", 
+            periodic_dims=[],
         )
 
     def state_test_range(self):
@@ -1724,7 +1726,7 @@ class Quad2DAttitude_parametric(Dynamics):
         wrapped_state = torch.clone(state)
         return wrapped_state
     
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
         dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
@@ -1745,10 +1747,10 @@ class Quad2DAttitude_parametric(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         optimal_control = self.optimal_control(state, dvds)
         optimal_disturbance = self.optimal_disturbance(state, dvds)
-        flow = self.dsdt(state, optimal_control, optimal_disturbance)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
         return torch.sum(flow*dvds, dim=-1)
     
     def optimal_control(self, state, dvds):
