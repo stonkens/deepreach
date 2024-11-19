@@ -646,6 +646,12 @@ class Quad2DAttitude(Dynamics):
         circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
         rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
         self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+        from utils.boundary_functions import InputSet
+        # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+        # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+        self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
+        self.disturbance_space = InputSet(lo=[-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist], 
+                                     hi=[max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist])
         super().__init__(
             loss_type='brt_hjivi', set_mode=set_mode,
             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
@@ -666,6 +672,11 @@ class Quad2DAttitude(Dynamics):
             [-1.4, 1.4]
         ]
     
+    # Quadcopter Dynamics
+    # \dot y = v_y + d_1
+    # \dot z = v_z + d_2
+    # \dot v_y = g * u_1 + d_3
+    # \dot v_z = u_2 - g + d_4
     def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
@@ -674,6 +685,42 @@ class Quad2DAttitude(Dynamics):
         dsdt[..., 3] = control[..., 1] - self.gravity + disturbance[..., 3]
         return dsdt
     
+    def open_loop_dynamics(self, state, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] 
+        dsdt[..., 1] = state[..., 3] 
+        dsdt[..., 2] = 0
+        dsdt[..., 3] = - self.gravity 
+        return dsdt
+
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        # torch.tensor([
+        #     [0., 0.],
+        #     [0., 0.],
+        #     [self.gravity, 0.],
+        #     [0., 1.],
+        # ])
+        
+        control_jacobian[..., 2, 0] = self.gravity
+        control_jacobian[..., 3, 1] = 1.0
+        return control_jacobian
+        
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        # torch.tensor([
+        #     [1., 0., 0., 0.],
+        #     [0., 1., 0., 0.],
+        #     [0., 0., 1., 0.],
+        #     [0., 0., 0., 1.],
+        # ])
+
+        disturbance_jacobian[..., 0, 0] = 1.0
+        disturbance_jacobian[..., 1, 1] = 1.0
+        disturbance_jacobian[..., 2, 2] = 1.0
+        disturbance_jacobian[..., 3, 3] = 1.0
+        return disturbance_jacobian
+
     def boundary_fn(self, state):
         return self.sdf(state)
 
@@ -1804,7 +1851,150 @@ class Quad2DAttitude_parametric(Dynamics):
             'z_axis_idx': [2, 3],
         }
 
+class InvertedPendulum(Dynamics): 
+    # Following dynamics from: https://arxiv.org/pdf/2206.03568 
+    # NOTE: want to follow dynamics from: https://arxiv.org/pdf/1903.08792 
 
+    def __init__(self, gravity: float, length: float, mass: float, 
+                 unsafe_theta_min: float, unsafe_theta_max: float, min_torque: float, max_torque: float, 
+                 max_theta_dist: float, max_thetadot_dist: float, tMin: float=0.0, tMax: float=1.0):
+        
+        import numpy as np 
+
+        self.gravity = gravity 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        # pendulum parameters
+        self.gravity = gravity 
+        self.length = length 
+        self.mass = mass 
+
+        # control and disturbance parameters 
+        self.min_torque = min_torque 
+        self.max_torque = max_torque 
+        self.max_theta_dist = max_theta_dist 
+        self.max_thetadot_dist = max_thetadot_dist
+
+        self.unsafe_theta_min = unsafe_theta_min 
+        self.unsafe_theta_max = unsafe_theta_max
+
+        # Boundaries # NOTE: TODO: Add
+
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid', 
+            state_dim=2, input_dim=3, control_dim=1, disturbance_dim=2, 
+            state_mean=[np.pi, 0], # NOTE: TODO: Check this - print a bunch of states and see what the case is ? 
+            state_var=[np.pi, 1], # NOTE: TODO: check the angular velocity range 
+            value_mean=0.2, # NOTE: TODO: check this ? - ask sander - check all the ones below ...
+            value_var=0.5, 
+            value_normto=0.02, 
+            deepreach_model='vanilla', 
+            periodic_dims=[0,1] 
+        )
+        return 
+
+    def pendulum_sdf(self, state): 
+        # TODO: might need to have a wrap around thing here 
+        theta = state[..., 0] 
+        
+        unsafe_val = torch.zeros(theta.shape).to(state.device)
+        unsafe_val[torch.where(theta > self.unsafe_theta_max)] = (theta - self.unsafe_theta_max)[torch.where(theta > self.unsafe_theta_max)]
+        unsafe_val[torch.where(theta < self.unsafe_theta_min)] = (self.unsafe_theta_min - theta)[torch.where(theta < self.unsafe_theta_min)]
+        
+        remaining_dims = torch.where((self.unsafe_theta_max > theta) & (theta > self.unsafe_theta_min))
+        unsafe_val[remaining_dims] = torch.min(self.unsafe_theta_min - theta, theta - self.unsafe_theta_max)[remaining_dims]
+
+        return unsafe_val
+
+    def state_test_range(self):
+        raise NotImplementedError
+    
+    def equivalent_wrapped_state(self): 
+        raise NotImplementedError
+    
+    # Dynamics 
+    # d theta    = thetadot
+    # d thetadot = 3g/2l sin(theta) + 3/ml^2 u 
+    def dsdt(self, state, control, disturbance, time): 
+        theta, thetadot = state 
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = thetadot + disturbance[..., 0]
+        dsdt[..., 1] = ((3*self.gravity)*(torch.sin(theta)))/(2 * self.length) + (3/(self.mass * self.length**2))*control[..., 0] + disturbance[..., 1]
+        return dsdt
+    
+    def boundary_fn(self, state): 
+        return self.pendulum_sdf(state)
+    
+    def sample_target_state(self, num_samples): 
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj): 
+        raise NotImplementedError
+    
+    def hamiltonian(self, state, time, dvds):
+        raise NotImplementedError
+    
+    def optimal_control(self, state, dvds): 
+        raise NotImplementedError
+    
+    def optimal_disturbance(self, state, dvds):
+        raise NotImplementedError
+    
+    def plot_config(self): 
+        raise NotImplementedError
+
+
+    def render(self, state, img_size=[500, 500]):
+        """
+        Creates an image of a pendulum at a given angle.
+
+        Args:
+        - theta (float): Angle of the pendulum (in radians) from the vertical.
+        - length (float): Length of the pendulum (normalized for rendering).
+        - img_size (int): Size of the square image in pixels.
+
+        Returns:
+        - img (numpy.ndarray): Image of the pendulum as a NumPy array with size (img_size, img_size, 3).
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np 
+        import imageio
+        from PIL import Image, ImageDraw, ImageFont
+
+        theta, thetadot = state
+        safe = self.boundary_fn(torch.tensor([[theta.item(), thetadot.item()]])) > 0 
+
+        # Create a blank canvas
+        fig, ax = plt.subplots(figsize=(img_size[0] / 100, img_size[1] / 100), dpi=100)
+        ax.set_xlim(-self.length - 0.5, self.length + 0.5)
+        ax.set_ylim(-self.length - 0.5, self.length + 0.5)
+        ax.axis("off")
+
+        # Pendulum coordinates: 0 means on top, np.pi means on bottom, pi/2 on right, -pi/2 on left
+        x = self.length * torch.sin(theta)
+        y = self.length * torch.cos(theta)  # positive because want flipped #-self.length * torch.cos(theta)  # Negative because y increases downwards
+
+        # Draw pendulum
+        ax.plot([0, x], [0, y], color="black", lw=2)  # Rod
+        if safe: 
+            ax.scatter(x, y, color="green", s=100)  # Pendulum bob
+        else: 
+            ax.scatter(x, y, color="red", s=500)  # Pendulum bob
+
+        # Add state text near the pendulum bob
+        state_text = f"θ = {theta:.2f} rad"
+        ax.text(x + 0.1, y, state_text, fontsize=12, color="blue", ha="left", va="center")
+
+        # Save the figure to a NumPy array
+        fig.canvas.draw()
+        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        plt.close(fig)
+
+        img = np.array(img)
+        return img
+    
 
 if __name__ == "__main__":
     dynamics = Quad2DAttitude(9.81, 0.75, 5.0, 15.0, 0.0, 0.0, 'avoid')

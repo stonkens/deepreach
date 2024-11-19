@@ -127,3 +127,61 @@ class Quad2DAttitude_parametric(ControlandDisturbanceAffineDynamics):
             [0., 0., 1., 0.],
             [0., 0., 0., 1.],
         ])
+
+
+class InvertedPendulum(ControlandDisturbanceAffineDynamics): 
+    # Following dynamics from: https://arxiv.org/pdf/2206.03568 
+    # NOTE: want to follow dynamics from: https://arxiv.org/pdf/1903.08792 
+
+    def __init__(self, torch_dynamics, gravity: float, length: float, mass: float, 
+                 unsafe_theta_min: float, unsafe_theta_max: float, min_torque: float, max_torque: float, 
+                 max_theta_dist: float, max_thetadot_dist: float, tMin: float=0.0, tMax: float=1.0):
+        """
+        args: 
+        - gravity: default 9.8
+        - length: default 1.0
+        - mass: default 1.0 
+        - unsafe_theta_min: angle in radians describing start of unsafe region
+        - unsafe_theta_max: angle in radians describing end of unsafe region 
+        - min_torque: min input torque
+        - max_torque: max input torque 
+        - max_theta_dist: max  disturbance on positional angle in radians 
+        - max_thetadot_dist: max disturbance on angular velocity in radians 
+        - tMin
+        - tMax 
+        """    
+        self.torch_dynamics = torch_dynamics
+        self.gravity = gravity 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        # pendulum parameters
+        self.gravity = gravity 
+        self.length = length 
+        self.mass = mass 
+
+        # control and disturbance parameters 
+        self.min_torque = min_torque 
+        self.max_torque = max_torque 
+        self.max_theta_dist = max_theta_dist 
+        self.max_thetadot_dist = max_thetadot_dist
+        
+        control_space = sets.Box(jnp.array([min_torque]), jnp.array([max_torque]))
+        disturbance_space = sets.Box(jnp.array([-max_theta_dist, -max_thetadot_dist]), 
+                                     jnp.array([ max_theta_dist,  max_thetadot_dist]))
+        
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+    # # Dynamics 
+    # # d theta    = thetadot
+    # # d thetadot = 3g/2l sin(theta) + 3/ml^2 u 
+    def open_loop_dynamics(self, state, time):
+        theta, theta_dot = state
+        return jnp.array([theta_dot, 3 * self.gravity / (2 * self.length) * jnp.sin(theta)])
+    
+    def control_jacobian(self, state, time):
+        return jnp.array([[0.0], [3.0 / (self.mass * self.length ** 2)]])
+    
+    def disturbance_jacobian(self, state, time):
+        return jnp.array([[1.0, 0.0], [0.0, 1.0]])
+    
