@@ -1860,7 +1860,9 @@ class InvertedPendulum(Dynamics):
 
     def __init__(self, gravity: float, length: float, mass: float, 
                  unsafe_theta_min: float, unsafe_theta_max: float, min_torque: float, max_torque: float, 
-                 max_theta_dist: float, max_thetadot_dist: float, tMin: float=0.0, tMax: float=1.0):
+                 max_theta_dist: float, max_thetadot_dist: float, 
+                 damping: float=0.0, 
+                 tMin: float=0.0, tMax: float=1.0):
         
         import numpy as np 
 
@@ -1881,6 +1883,8 @@ class InvertedPendulum(Dynamics):
 
         self.unsafe_theta_min = unsafe_theta_min 
         self.unsafe_theta_max = unsafe_theta_max
+
+        self.damping = damping 
 
         # Boundaries # NOTE: TODO: Add
 
@@ -1916,16 +1920,18 @@ class InvertedPendulum(Dynamics):
     def equivalent_wrapped_state(self): 
         raise NotImplementedError
     
+   
     # Dynamics 
-    # d theta    = thetadot
-    # d thetadot = 3g/2l sin(theta) + 3/ml^2 u 
-    def dsdt(self, state, control, disturbance, time): 
-        theta, thetadot = state 
+    # d theta  = thetadot
+    # d thetadot = (-damping*theta_dot - m*g*l*sin(theta) + dt)/ml^2 + 1/ml^2 u # NOTE: assumes gravity is positive
+    def dsdt(self, state, control, disturbance, time):
+        theta, thetadot = state
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = thetadot + disturbance[..., 0]
-        dsdt[..., 1] = ((3*self.gravity)*(torch.sin(theta)))/(2 * self.length) + (3/(self.mass * self.length**2))*control[..., 0] + disturbance[..., 1]
-        return dsdt
-    
+        dsdt[..., 1] = (-self.damping * thetadot + self.mass * self.gravity * self.length * torch.sin(theta) ) / (self.mass * self.length ** 2) + \
+                        (control[..., 0]/ (self.mass * self.length**2)) + disturbance[..., 1]
+        return dsdt 
+
     def boundary_fn(self, state): 
         return self.pendulum_sdf(state)
     

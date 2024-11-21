@@ -135,7 +135,9 @@ class InvertedPendulum(ControlandDisturbanceAffineDynamics):
 
     def __init__(self, torch_dynamics, gravity: float, length: float, mass: float, 
                  unsafe_theta_min: float, unsafe_theta_max: float, min_torque: float, max_torque: float, 
-                 max_theta_dist: float, max_thetadot_dist: float, tMin: float=0.0, tMax: float=1.0):
+                 max_theta_dist: float, max_thetadot_dist: float, 
+                 damping: float=0.0, 
+                 tMin: float=0.0, tMax: float=1.0):
         """
         args: 
         - gravity: default 9.8
@@ -147,6 +149,7 @@ class InvertedPendulum(ControlandDisturbanceAffineDynamics):
         - max_torque: max input torque 
         - max_theta_dist: max  disturbance on positional angle in radians 
         - max_thetadot_dist: max disturbance on angular velocity in radians 
+        - damping: spring damping on the hinge 
         - tMin
         - tMax 
         """    
@@ -165,6 +168,8 @@ class InvertedPendulum(ControlandDisturbanceAffineDynamics):
         self.max_torque = max_torque 
         self.max_theta_dist = max_theta_dist 
         self.max_thetadot_dist = max_thetadot_dist
+
+        self.damping = damping 
         
         control_space = sets.Box(jnp.array([min_torque]), jnp.array([max_torque]))
         disturbance_space = sets.Box(jnp.array([-max_theta_dist, -max_thetadot_dist]), 
@@ -172,15 +177,22 @@ class InvertedPendulum(ControlandDisturbanceAffineDynamics):
         
         super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
 
-    # # Dynamics 
-    # # d theta    = thetadot
-    # # d thetadot = 3g/2l sin(theta) + 3/ml^2 u 
+   
+    # Dynamics 
+    # d theta  = thetadot
+    # d thetadot = (-damping*theta_dot - m*g*l*sin(theta) + dt)/ml^2 + 1/ml^2 u # NOTE: assumes gravity is positive
     def open_loop_dynamics(self, state, time):
-        theta, theta_dot = state
-        return jnp.array([theta_dot, 3 * self.gravity / (2 * self.length) * jnp.sin(theta)])
+        theta, thetadot = state
+        return jnp.array([
+            thetadot, 
+            (-self.damping * thetadot + self.mass * self.gravity * self.length * jnp.sin(theta)) / (self.mass * self.length ** 2)
+        ])
     
-    def control_jacobian(self, state, time):
-        return jnp.array([[0.0], [3.0 / (self.mass * self.length ** 2)]])
+    def control_jacobian(self, state, time): 
+        return jnp.array([
+            [0.0], 
+            [1/(self.mass * self.length**2)]
+        ])
     
     def disturbance_jacobian(self, state, time):
         return jnp.array([[1.0, 0.0], [0.0, 1.0]])
