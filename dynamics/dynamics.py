@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
-from utils import diff_operators
+try:
+    from utils import diff_operators
+except: 
+    from deepreach.utils import diff_operators
 
 import math
 import torch
