@@ -2198,7 +2198,7 @@ class CartPole(Dynamics):
         # Create the figure and axes
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.set_xlim(-2, 2)  # Set x-axis limits
-        ax.set_ylim(-1, 1)  # Set y-axis limits
+        ax.set_ylim(-1.5, 1.5)  # Set y-axis limits
         ax.set_aspect('equal')
         ax.set_title(f"Cartpole: {(np.round(x.item(), decimals=3) , np.round(theta.item(), decimals=3))}")
         ax.set_xlabel("X")
@@ -2212,7 +2212,8 @@ class CartPole(Dynamics):
         # Plot the patches 
         rect = plt.Rectangle((x-cart_width/2, y-cart_height/2), cart_width, cart_height, fill=True, color=color)
         line_start = (x, y) # x,y
-        line_end = (x - pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        # line_end = (x - pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line_end = (x + pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
         line = plt.Line2D([line_start[0], line_end[0]], [line_start[1], line_end[1]], color=color)
         ax.add_line(line)
         ax.add_patch(rect)
