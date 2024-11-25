@@ -197,3 +197,50 @@ class InvertedPendulum(ControlandDisturbanceAffineDynamics):
     def disturbance_jacobian(self, state, time):
         return jnp.array([[1.0, 0.0], [0.0, 1.0]])
     
+
+class CartPole(ControlandDisturbanceAffineDynamics):
+    def __init__(self, torch_dynamics, gravity: float, umax: float, length: float, mass_cart: float, mass_pole: float,
+                 unsafe_x_min: float, unsafe_x_max: float, unsafe_vel_max: float, unsafe_theta_min: float, unsafe_theta_max: float, # unsafe bounds
+                 x_dist: float, theta_dist: float, vel_dist: float, thetadot_dist: float, # disturbance bound parameters
+                 tMin: float=0.0, tMax: float=1.0,
+                 unsafe_theta_in_range: float=True,
+                 control_mode="max", disturbance_mode="min", control_space=None, disturbance_space=None):
+        
+        self.torch_dynamics = torch_dynamics 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        self.umax = umax # 10.0
+        self.length = length # 0.5  # length of the pole
+        self.m_c = mass_cart # 1.0  # mass of cart
+        self.m = mass_pole # 0.1 # mass of pole
+        self.gravity = gravity # -9.8
+
+        if control_space is None:
+            control_space = hj.sets.Box(jnp.array([-self.umax]), jnp.array([self.umax]))
+        if disturbance_space is None:
+            # disturbance_space = hj.sets.Box(jnp.array([0.0, 0.0, -0.2, -0.2]), jnp.array([0.0, 0.0, 0.2, 0.2]))
+            disturbance_space = hj.sets.Box(jnp.array([-x_dist, -theta_dist, -vel_dist, -thetadot_dist]), jnp.array([x_dist, theta_dist, vel_dist, thetadot_dist]))
+        # super().__init__(control_mode, disturbance_mode, control_space, disturbance_space)
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+    # NOTE: old one - might be the correct one 
+    def open_loop_dynamics(self, state, time):
+        x, theta, xdot, thetadot = state
+        return jnp.array([
+            xdot,
+            thetadot,
+            self.m * (self.length * thetadot ** 2 + self.gravity * jnp.cos(theta)) * jnp.sin(theta) / (self.m_c + self.m * jnp.sin(theta) ** 2),
+            - ((self.m + self.m_c) * self.gravity * jnp.sin(theta) + self.m * self.length * thetadot ** 2 * jnp.sin(theta) * jnp.cos(theta)) / (self.length * (self.m_c + self.m * jnp.sin(theta) ** 2))
+        ])
+
+    
+    def control_jacobian(self, state, time):
+        return jnp.array([[0.0], 
+                          [0.0], 
+                          [1.0 / (self.m_c + self.m * jnp.sin(state[1]) ** 2)], 
+                          [jnp.cos(state[1]) / (self.length * (self.m_c + self.m * jnp.sin(state[1]) ** 2))]
+                          ])
+    
+    def disturbance_jacobian(self, state, time):
+        return jnp.eye(4)
