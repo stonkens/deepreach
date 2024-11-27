@@ -269,3 +269,58 @@ class CartPole(ControlandDisturbanceAffineDynamics):
     
     def disturbance_jacobian(self, state, time):
         return jnp.eye(4)
+
+
+
+# NOTE: Same as CartPole but the avoid sdf (only important for rendering) can be specified after initialization 
+# Unsafe things don't need to be specified when initalizing    
+class BaseCartPole(ControlandDisturbanceAffineDynamics):
+    def __init__(self, torch_dynamics, gravity: float, umax: float, length: float, mass_cart: float, mass_pole: float,
+                 x_dist: float, theta_dist: float, vel_dist: float, thetadot_dist: float, # disturbance bound parameters
+                 tMin: float=0.0, tMax: float=1.0,
+                 control_mode="max", disturbance_mode="min", control_space=None, disturbance_space=None):
+        
+        self.torch_dynamics = torch_dynamics 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        self.umax = umax # 10.0
+        self.length = length # 0.5  # length of the pole
+        self.m_c = mass_cart # 1.0  # mass of cart
+        self.m = mass_pole # 0.1 # mass of pole
+        self.gravity = gravity # -9.8
+
+        if control_space is None:
+            control_space = hj.sets.Box(jnp.array([-self.umax]), jnp.array([self.umax]))
+        if disturbance_space is None:
+            disturbance_space = hj.sets.Box(jnp.array([-x_dist, -theta_dist, -vel_dist, -thetadot_dist]), jnp.array([x_dist, theta_dist, vel_dist, thetadot_dist]))
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+
+    # Dynamics from: https://courses.ece.ucsb.edu/ECE594/594D_W10Byl/hw/cartpole_eom.pdf 
+    # NOTE: new one - theta goes clockwise however ISSUE: negative thetadot causes positive increase in theta
+    def open_loop_dynamics(self, state, time):
+        x, theta, xdot, thetadot = state
+        # Multiply by -1 to flip theta conventions: now theta increases clockwise
+        theta = -theta 
+        thetadot = -thetadot
+        return jnp.array([
+            xdot,
+            -1 * thetadot,
+            -(self.m * self.length * jnp.sin(theta) * thetadot**2) + (self.m * self.gravity * jnp.sin(theta) * jnp.cos(theta)) / (self.m_c + self.m*jnp.sin(theta)**2),
+            -1 * (-(self.m * self.length * jnp.cos(theta) * jnp.sin(theta) * thetadot**2) + ((self.m_c + self.m)*self.gravity*jnp.sin(theta))  / (self.length * (self.m_c + self.m * jnp.sin(theta) ** 2)))
+        ])
+    
+    def control_jacobian(self, state, time):
+        # Multiply by -1 to flip theta conventions: now theta increases clockwise
+        x, theta, xdot, thetadot = state 
+        theta = -theta 
+        thetadot = -thetadot
+        return jnp.array([[0.0], 
+                          [-1 * 0.0], 
+                          [1.0 / (self.m_c + self.m * jnp.sin(state[1]) ** 2)], 
+                          [-1 *jnp.cos(state[1]) / (self.length * (self.m_c + self.m * jnp.sin(state[1]) ** 2))]
+                          ])
+    
+    def disturbance_jacobian(self, state, time):
+        return jnp.eye(4)

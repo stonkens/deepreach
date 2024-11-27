@@ -2231,6 +2231,161 @@ class CartPole(Dynamics):
         return img_array
 
 
+# NOTE: Same as CartPole but the avoid sdf (only important for rendering) can be specified after initialization 
+# Unsafe things don't need to be specified when initalizing 
+class BaseCartPole(Dynamics): 
+    # Following dynamics from: https://arxiv.org/pdf/2206.03568 
+    # NOTE: want to follow dynamics from: https://arxiv.org/pdf/1903.08792 
+
+    def __init__(self, gravity: float, umax: float, length: float, mass_cart: float, mass_pole: float,
+                 x_dist: float, theta_dist: float, vel_dist: float, thetadot_dist: float, # disturbance bound parameters
+                 tMin: float=0.0, tMax: float=1.0):
+        """
+        args: 
+            - unsafe_theta_in_range: 
+                - True:  when True the unsafe theta are described in the range
+                - False: when False the range describes the safe theta - and out of range is the unsafe theta 
+        """
+        import numpy as np 
+
+        self.gravity = gravity 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        # cartpole parameters
+        self.gravity = gravity 
+        self.length = length 
+        self.m_c = mass_cart
+        self.m = mass_pole 
+
+        # control and disturbance parameters 
+        self.umax = umax
+        
+        self.x_dist = x_dist 
+        self.theta_dist = theta_dist
+        self.vel_dist = vel_dist 
+        self.thetadot_dist = thetadot_dist 
+
+
+        # Initialize boundary function - start with safe everywhere 
+        self.boundary_function = lambda x: torch.ones(x[..., 0].shape).to(x.device)
+
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid', 
+            state_dim=2, input_dim=3, control_dim=1, disturbance_dim=2, 
+            state_mean=[np.pi, 0], # NOTE: TODO: Check this - print a bunch of states and see what the case is ? 
+            state_var=[np.pi, 1], # NOTE: TODO: check the angular velocity range 
+            value_mean=0.2, # NOTE: TODO: check this ? - ask sander - check all the ones below ...
+            value_var=0.5, 
+            value_normto=0.02, 
+            deepreach_model='vanilla', 
+            periodic_dims=[0,1] 
+        )
+        return 
+
+    def state_test_range(self):
+        raise NotImplementedError
+    
+    def equivalent_wrapped_state(self): 
+        raise NotImplementedError
+    
+   
+    # Dynamics: TODO: add dynamics equations here 
+    def dsdt(self, state, control, disturbance, time):
+        raise NotImplementedError
+
+    def init_boundary_fn(self, func):
+        """
+        Function to initialize boundary function for cartpole: 
+        This is the function that will be used for the boundary function 
+            - NOTE: right now honestly only used for rendering 
+        args: 
+            - func: function that takes in state and returns the avoid value 
+        """
+        self.boundary_function = func 
+        return 
+    
+    def boundary_fn(self, state): 
+        return self.boundary_function(state)
+    
+    def sample_target_state(self, num_samples): 
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj): 
+        raise NotImplementedError
+    
+    def hamiltonian(self, state, time, dvds):
+        raise NotImplementedError
+    
+    def optimal_control(self, state, dvds): 
+        raise NotImplementedError
+    
+    def optimal_disturbance(self, state, dvds):
+        raise NotImplementedError
+    
+    def plot_config(self): 
+        raise NotImplementedError
+
+    def is_unsafe(self, state): 
+        """
+        Returns boolean if the cartpole is in the unsafe region
+        """
+        return self.boundary_fn(state) < 0 
+
+    def render(self, state):
+        """
+        Renders the cartpole environment and returns it as a NumPy array.
+
+        Args:
+            state (list or np.ndarray): The state of the cartpole [x, theta, x_dot, theta_dot].
+        Returns:
+            np.ndarray: The rendered image as a NumPy array.
+        """
+        pole_length = self.length 
+        cart_width = self.length/2
+        cart_height = self.length/4
+
+        x, theta, _, _ = state
+        y=0
+
+        # Ensure theta is between -np.pi and np.pi
+        theta = (theta + np.pi) % (2 * np.pi) - np.pi
+
+        # Create the figure and axes
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.set_xlim(-2, 2)  # Set x-axis limits
+        ax.set_ylim(-1.5, 1.5)  # Set y-axis limits
+        ax.set_aspect('equal')
+        ax.set_title(f"Cartpole: {(np.round(x.item(), decimals=3) , np.round(theta.item(), decimals=3))}")
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        
+        if self.is_unsafe(state): 
+            color = 'red'
+        else: 
+            color = 'blue'
+
+        # Plot the patches 
+        rect = plt.Rectangle((x-cart_width/2, y-cart_height/2), cart_width, cart_height, fill=True, color=color)
+        line_start = (x, y) # x,y
+        # line_end = (x - pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line_end = (x + pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line = plt.Line2D([line_start[0], line_end[0]], [line_start[1], line_end[1]], color=color)
+        ax.add_line(line)
+        ax.add_patch(rect)
+
+        # Render the figure to a NumPy array
+        fig.canvas.draw()  # Render the figure
+        buf = BytesIO()
+        fig.savefig(buf, format="png", bbox_inches='tight')
+        buf.seek(0)
+        img = Image.open(buf)
+        img_array = np.array(img)
+        buf.close()
+
+        plt.close(fig)  # Close the figure to release memory
+        return img_array
+
 
 if __name__ == "__main__":
     dynamics = Quad2DAttitude(9.81, 0.75, 5.0, 15.0, 0.0, 0.0, 'avoid')
