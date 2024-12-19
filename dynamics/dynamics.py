@@ -1,8 +1,17 @@
 from abc import ABC, abstractmethod
-from utils import diff_operators
+try:
+    from utils import diff_operators
+except: 
+    from deepreach.utils import diff_operators
 
 import math
 import torch
+
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+import numpy as np
+from io import BytesIO
+from PIL import Image
 
 # during training, states will be sampled uniformly by each state dimension from the model-unit -1 to 1 range (for training stability),
 # which may or may not correspond to proper test ranges
@@ -651,6 +660,12 @@ class Quad2DAttitude(Dynamics):
         circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
         rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
         self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+        from utils.boundary_functions import InputSet
+        # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+        # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+        self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
+        self.disturbance_space = InputSet(lo=[-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist], 
+                                     hi=[max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist])
         super().__init__(
             loss_type='brt_hjivi', set_mode=set_mode,
             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
@@ -671,6 +686,11 @@ class Quad2DAttitude(Dynamics):
             [-1.4, 1.4]
         ]
     
+    # Quadcopter Dynamics
+    # \dot y = v_y + d_1
+    # \dot z = v_z + d_2
+    # \dot v_y = g * u_1 + d_3
+    # \dot v_z = u_2 - g + d_4
     def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
@@ -679,6 +699,42 @@ class Quad2DAttitude(Dynamics):
         dsdt[..., 3] = control[..., 1] - self.gravity + disturbance[..., 3]
         return dsdt
     
+    def open_loop_dynamics(self, state, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] 
+        dsdt[..., 1] = state[..., 3] 
+        dsdt[..., 2] = 0
+        dsdt[..., 3] = - self.gravity 
+        return dsdt
+
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        # torch.tensor([
+        #     [0., 0.],
+        #     [0., 0.],
+        #     [self.gravity, 0.],
+        #     [0., 1.],
+        # ])
+        
+        control_jacobian[..., 2, 0] = self.gravity
+        control_jacobian[..., 3, 1] = 1.0
+        return control_jacobian
+        
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        # torch.tensor([
+        #     [1., 0., 0., 0.],
+        #     [0., 1., 0., 0.],
+        #     [0., 0., 1., 0.],
+        #     [0., 0., 0., 1.],
+        # ])
+
+        disturbance_jacobian[..., 0, 0] = 1.0
+        disturbance_jacobian[..., 1, 1] = 1.0
+        disturbance_jacobian[..., 2, 2] = 1.0
+        disturbance_jacobian[..., 3, 3] = 1.0
+        return disturbance_jacobian
+
     def boundary_fn(self, state):
         return self.sdf(state)
 
@@ -1473,7 +1529,7 @@ class MultiVehicleCollision(Dynamics):
 
 class Drone4D(Dynamics): 
 
-    def __init__(self, gravity: float, min_angle: float, max_angle: float, min_thrust: float, max_thrust: float, 
+    def __init__(self, set_mode:str, gravity: float, min_angle: float, max_angle: float, min_thrust: float, max_thrust: float, 
                 max_pos_y_dist: float, max_pos_z_dist: float, max_vel_y_dist: float, max_vel_z_dist: float): 
 
         # Input bounds
@@ -1507,7 +1563,8 @@ class Drone4D(Dynamics):
             value_mean=0.2,             # NOTE: might want to change
             value_var=0.5,              # NOTE: might want to change
             value_normto=0.02,          # NOTE: might want to change
-            deepreach_model="vanilla" # NOTE: Was "exact" before, "vanilla" worked better on the attitude model with these boundary functions 
+            deepreach_model="vanilla", # NOTE: Was "exact" before, "vanilla" worked better on the attitude model with these boundary functions 
+            periodic_dims=[]
         )
 
 
@@ -1529,7 +1586,7 @@ class Drone4D(Dynamics):
     # \dot vy = u2 sin(u1) + d3
     # \dot vz = u2 cos(u1) - g + d4
     # state = [y, z, vy, vz]
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
         dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
@@ -1547,7 +1604,7 @@ class Drone4D(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         # Compute the hamiltonian for the drone
         # args: state (tensor), dvds (tensor) - derivative of value function wrt state
         # TODO
@@ -1695,7 +1752,8 @@ class Quad2DAttitude_parametric(Dynamics):
             value_mean=0.2,
             value_var=0.5,
             value_normto=0.02,
-            deepreach_model="exact"
+            deepreach_model="exact", 
+            periodic_dims=[],
         )
 
     def state_test_range(self):
@@ -1729,7 +1787,7 @@ class Quad2DAttitude_parametric(Dynamics):
         wrapped_state = torch.clone(state)
         return wrapped_state
     
-    def dsdt(self, state, control, disturbance):
+    def dsdt(self, state, control, disturbance, time):
         dsdt = torch.zeros_like(state)
         dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
         dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
@@ -1750,10 +1808,10 @@ class Quad2DAttitude_parametric(Dynamics):
     def cost_fn(self, state_traj):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
 
-    def hamiltonian(self, state, dvds):
+    def hamiltonian(self, state, time, dvds):
         optimal_control = self.optimal_control(state, dvds)
         optimal_disturbance = self.optimal_disturbance(state, dvds)
-        flow = self.dsdt(state, optimal_control, optimal_disturbance)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
         return torch.sum(flow*dvds, dim=-1)
     
     def optimal_control(self, state, dvds):
@@ -1807,6 +1865,531 @@ class Quad2DAttitude_parametric(Dynamics):
             'z_axis_idx': [2, 3],
         }
 
+class InvertedPendulum(Dynamics): 
+    # Following dynamics from: https://arxiv.org/pdf/2206.03568 
+    # NOTE: want to follow dynamics from: https://arxiv.org/pdf/1903.08792 
+
+    def __init__(self, gravity: float, length: float, mass: float, 
+                 unsafe_theta_min: float, unsafe_theta_max: float, min_torque: float, max_torque: float, 
+                 max_theta_dist: float, max_thetadot_dist: float, 
+                 damping: float=0.0, 
+                 tMin: float=0.0, tMax: float=1.0):
+        
+        import numpy as np 
+
+        self.gravity = gravity 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        # pendulum parameters
+        self.gravity = gravity 
+        self.length = length 
+        self.mass = mass 
+
+        # control and disturbance parameters 
+        self.min_torque = min_torque 
+        self.max_torque = max_torque 
+        self.max_theta_dist = max_theta_dist 
+        self.max_thetadot_dist = max_thetadot_dist
+
+        self.unsafe_theta_min = unsafe_theta_min 
+        self.unsafe_theta_max = unsafe_theta_max
+
+        self.damping = damping 
+
+        # Boundaries # NOTE: TODO: Add
+
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid', 
+            state_dim=2, input_dim=3, control_dim=1, disturbance_dim=2, 
+            state_mean=[np.pi, 0], # NOTE: TODO: Check this - print a bunch of states and see what the case is ? 
+            state_var=[np.pi, 1], # NOTE: TODO: check the angular velocity range 
+            value_mean=0.2, # NOTE: TODO: check this ? - ask sander - check all the ones below ...
+            value_var=0.5, 
+            value_normto=0.02, 
+            deepreach_model='vanilla', 
+            periodic_dims=[0,1] 
+        )
+        return 
+
+    def pendulum_sdf(self, state): 
+        # TODO: might need to have a wrap around thing here 
+        theta = state[..., 0] 
+        
+        unsafe_val = torch.zeros(theta.shape).to(state.device)
+        unsafe_val[torch.where(theta > self.unsafe_theta_max)] = (theta - self.unsafe_theta_max)[torch.where(theta > self.unsafe_theta_max)]
+        unsafe_val[torch.where(theta < self.unsafe_theta_min)] = (self.unsafe_theta_min - theta)[torch.where(theta < self.unsafe_theta_min)]
+        
+        remaining_dims = torch.where((self.unsafe_theta_max > theta) & (theta > self.unsafe_theta_min))
+        unsafe_val[remaining_dims] = torch.min(self.unsafe_theta_min - theta, theta - self.unsafe_theta_max)[remaining_dims]
+
+        return unsafe_val
+
+    def state_test_range(self):
+        raise NotImplementedError
+    
+    def equivalent_wrapped_state(self): 
+        raise NotImplementedError
+    
+   
+    # Dynamics 
+    # d theta  = thetadot
+    # d thetadot = (-damping*theta_dot - m*g*l*sin(theta) + dt)/ml^2 + 1/ml^2 u # NOTE: assumes gravity is positive
+    def dsdt(self, state, control, disturbance, time):
+        theta, thetadot = state
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = thetadot + disturbance[..., 0]
+        dsdt[..., 1] = (-self.damping * thetadot + self.mass * self.gravity * self.length * torch.sin(theta) ) / (self.mass * self.length ** 2) + \
+                        (control[..., 0]/ (self.mass * self.length**2)) + disturbance[..., 1]
+        return dsdt 
+
+    def boundary_fn(self, state): 
+        return self.pendulum_sdf(state)
+    
+    def sample_target_state(self, num_samples): 
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj): 
+        raise NotImplementedError
+    
+    def hamiltonian(self, state, time, dvds):
+        raise NotImplementedError
+    
+    def optimal_control(self, state, dvds): 
+        raise NotImplementedError
+    
+    def optimal_disturbance(self, state, dvds):
+        raise NotImplementedError
+    
+    def plot_config(self): 
+        raise NotImplementedError
+
+
+    def render(self, state, img_size=[500, 500]):
+        """
+        Creates an image of a pendulum at a given angle.
+
+        Args:
+        - theta (float): Angle of the pendulum (in radians) from the vertical.
+        - length (float): Length of the pendulum (normalized for rendering).
+        - img_size (int): Size of the square image in pixels.
+
+        Returns:
+        - img (numpy.ndarray): Image of the pendulum as a NumPy array with size (img_size, img_size, 3).
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np 
+        import imageio
+        from PIL import Image, ImageDraw, ImageFont
+
+        theta, thetadot = state
+        safe = self.boundary_fn(torch.tensor([[theta.item(), thetadot.item()]])) > 0 
+
+        # Create a blank canvas
+        fig, ax = plt.subplots(figsize=(img_size[0] / 100, img_size[1] / 100), dpi=100)
+        ax.set_xlim(-self.length - 0.5, self.length + 0.5)
+        ax.set_ylim(-self.length - 0.5, self.length + 0.5)
+        ax.axis("off")
+
+        # Pendulum coordinates: 0 means on top, np.pi means on bottom, pi/2 on right, -pi/2 on left
+        x = self.length * torch.sin(theta)
+        y = self.length * torch.cos(theta)  # positive because want flipped #-self.length * torch.cos(theta)  # Negative because y increases downwards
+
+        # Draw pendulum
+        ax.plot([0, x], [0, y], color="black", lw=2)  # Rod
+        if safe: 
+            ax.scatter(x, y, color="green", s=100)  # Pendulum bob
+        else: 
+            ax.scatter(x, y, color="red", s=500)  # Pendulum bob
+
+        # Add state text near the pendulum bob
+        state_text = f"θ = {theta:.2f} rad"
+        ax.text(x + 0.1, y, state_text, fontsize=12, color="blue", ha="left", va="center")
+
+        # Save the figure to a NumPy array
+        fig.canvas.draw()
+        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        plt.close(fig)
+
+        img = np.array(img)
+        return img
+    
+
+class CartPole(Dynamics): 
+    # Following dynamics from: https://arxiv.org/pdf/2206.03568 
+    # NOTE: want to follow dynamics from: https://arxiv.org/pdf/1903.08792 
+
+    def __init__(self, gravity: float, umax: float, length: float, mass_cart: float, mass_pole: float,
+                 unsafe_x_min: float, unsafe_x_max: float, unsafe_vel_max: float, unsafe_theta_min: float, unsafe_theta_max: float, # unsafe bounds
+                 x_dist: float, theta_dist: float, vel_dist: float, thetadot_dist: float, # disturbance bound parameters
+                 tMin: float=0.0, tMax: float=1.0, unsafe_theta_in_range: float=True):
+        """
+        args: 
+            - unsafe_theta_in_range: 
+                - True:  when True the unsafe theta are described in the range
+                - False: when False the range describes the safe theta - and out of range is the unsafe theta 
+        """
+        import numpy as np 
+        self.unsafe_theta_in_range = unsafe_theta_in_range
+
+        self.gravity = gravity 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        # cartpole parameters
+        self.gravity = gravity 
+        self.length = length 
+        self.m_c = mass_cart
+        self.m = mass_pole 
+
+        # control and disturbance parameters 
+        self.umax = umax
+        
+        self.x_dist = x_dist 
+        self.theta_dist = theta_dist
+        self.vel_dist = vel_dist 
+        self.thetadot_dist = thetadot_dist 
+
+        # Unsafe parameters 
+        self.unsafe_x_min = unsafe_x_min
+        self.unsafe_x_max = unsafe_x_max 
+        self.unsafe_vel_max = unsafe_vel_max 
+        self.unsafe_theta_min = unsafe_theta_min 
+        self.unsafe_theta_max = unsafe_theta_max 
+
+        self.use_unsafe_theta = True 
+        if self.unsafe_theta_max == self.unsafe_theta_min: 
+            # Do not use unsafe theta in the sdf
+            self.use_unsafe_theta = False 
+
+        # Boundaries # NOTE: TODO: Add
+
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid', 
+            state_dim=2, input_dim=3, control_dim=1, disturbance_dim=2, 
+            state_mean=[np.pi, 0], # NOTE: TODO: Check this - print a bunch of states and see what the case is ? 
+            state_var=[np.pi, 1], # NOTE: TODO: check the angular velocity range 
+            value_mean=0.2, # NOTE: TODO: check this ? - ask sander - check all the ones below ...
+            value_var=0.5, 
+            value_normto=0.02, 
+            deepreach_model='vanilla', 
+            periodic_dims=[0,1] 
+        )
+        return 
+
+    def state_test_range(self):
+        raise NotImplementedError
+    
+    def equivalent_wrapped_state(self): 
+        raise NotImplementedError
+    
+   
+    # Dynamics: TODO: add dynamics equations here 
+    def dsdt(self, state, control, disturbance, time):
+        raise NotImplementedError
+
+    def cartpole_sdf(self, state): 
+        # TODO: Need to add this
+        x = state[..., 0]
+        theta = state[..., 1]
+        xdot = state[..., 2]
+        thetadot = state[..., 3]
+
+        # Unsafe x: in range is safe 
+        unsafe_x = torch.zeros(x.shape).to(state.device)
+        greater_than_x = torch.where(x > self.unsafe_x_max)
+        less_than_x = torch.where(x < self.unsafe_x_min)
+        in_range_x = torch.where((self.unsafe_x_min < x) & (x < self.unsafe_x_max))
+        unsafe_x[greater_than_x] = (self.unsafe_x_max - x)[greater_than_x] # negative unsafe 
+        unsafe_x[less_than_x] = (x - self.unsafe_x_min)[less_than_x] # negative unsafe
+        unsafe_x[in_range_x] = torch.min(x - self.unsafe_x_min, self.unsafe_x_max - x)[in_range_x]
+
+        # Unsafe velocity: in range is safe 
+        unsafe_xdot = torch.zeros(xdot.shape).to(state.device)
+        greater_than_xdot = torch.where(xdot > self.unsafe_vel_max)
+        less_than_xdot = torch.where(xdot < -self.unsafe_vel_max)
+        in_range_xdot = torch.where((-self.unsafe_vel_max < xdot) & (xdot < self.unsafe_vel_max))
+        unsafe_xdot[greater_than_xdot] = (self.unsafe_vel_max - xdot)[greater_than_xdot] # negative unsafe
+        unsafe_xdot[less_than_xdot] = (xdot - (-1 * self.unsafe_vel_max))[less_than_xdot] # negative unsafe
+        unsafe_xdot[in_range_xdot] = torch.min(xdot - (-1 * self.unsafe_vel_max), self.unsafe_vel_max - xdot)[in_range_xdot]
+
+        if self.use_unsafe_theta: 
+
+            unsafe_theta = torch.zeros(theta.shape).to(state.device)
+            greater_than_theta = torch.where(theta > self.unsafe_theta_max) 
+            less_than_theta = torch.where(theta < self.unsafe_theta_min)
+            in_range_theta = torch.where((self.unsafe_theta_min < theta) & (theta < self.unsafe_theta_max))
+            
+            if self.unsafe_theta_in_range: 
+                # Unsafe Theta: in range is unsafe
+                unsafe_theta[greater_than_theta] = (theta - self.unsafe_theta_max)[greater_than_theta]
+                unsafe_theta[less_than_theta] = (self.unsafe_theta_min - theta)[less_than_theta]
+                unsafe_theta[in_range_theta] = torch.min(self.unsafe_theta_min - theta, theta - self.unsafe_theta_max)[in_range_theta] # negative unsafe
+            else: 
+                # Safe Theta: in range, Unsafe theta: out of range 
+                unsafe_theta[greater_than_theta] = (self.unsafe_theta_max - theta)[greater_than_theta]
+                unsafe_theta[less_than_theta] = (theta - self.unsafe_theta_min)[less_than_theta]
+                unsafe_theta[in_range_theta] = torch.min(theta - self.unsafe_theta_min, self.unsafe_theta_max - theta)[in_range_theta]
+
+            # TODO: NOTE: might need to change 
+            unsafe_vals = torch.min(unsafe_x, torch.min(unsafe_xdot, unsafe_theta))
+        else: 
+            unsafe_vals = torch.min(unsafe_x, unsafe_xdot)
+        
+        # import pdb; pdb.set_trace()
+        return unsafe_vals
+
+    def boundary_fn(self, state): 
+        return self.cartpole_sdf(state)
+    
+    def sample_target_state(self, num_samples): 
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj): 
+        raise NotImplementedError
+    
+    def hamiltonian(self, state, time, dvds):
+        raise NotImplementedError
+    
+    def optimal_control(self, state, dvds): 
+        raise NotImplementedError
+    
+    def optimal_disturbance(self, state, dvds):
+        raise NotImplementedError
+    
+    def plot_config(self): 
+        raise NotImplementedError
+
+    def is_unsafe(self, state): 
+        """
+        Returns boolean if the cartpole is in the unsafe region
+        """
+        x = state[0]
+        theta = state[1]
+        xdot = state[2]
+
+        if x < self.unsafe_x_min or self.unsafe_x_max < x: 
+            return True 
+        elif xdot < -self.unsafe_vel_max or self.unsafe_vel_max < xdot: 
+            return True 
+        elif self.use_unsafe_theta:
+            if self.unsafe_theta_in_range: 
+                return (self.unsafe_theta_min < theta and theta < self.unsafe_theta_max)
+            else: 
+                return (theta < self.unsafe_theta_min or self.unsafe_theta_max < theta)
+
+        return False 
+
+    def render(self, state):
+        """
+        Renders the cartpole environment and returns it as a NumPy array.
+
+        Args:
+            state (list or np.ndarray): The state of the cartpole [x, theta, x_dot, theta_dot].
+        Returns:
+            np.ndarray: The rendered image as a NumPy array.
+        """
+        pole_length = self.length 
+        cart_width = self.length/2
+        cart_height = self.length/4
+
+        x, theta, _, _ = state
+        y=0
+
+        # Ensure theta is between -np.pi and np.pi
+        theta = (theta + np.pi) % (2 * np.pi) - np.pi
+
+        # Create the figure and axes
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.set_xlim(-2, 2)  # Set x-axis limits
+        ax.set_ylim(-1.5, 1.5)  # Set y-axis limits
+        ax.set_aspect('equal')
+        ax.set_title(f"Cartpole: {(np.round(x.item(), decimals=3) , np.round(theta.item(), decimals=3))}")
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        
+        if self.is_unsafe(state): 
+            color = 'red'
+        else: 
+            color = 'blue'
+
+        # Plot the patches 
+        rect = plt.Rectangle((x-cart_width/2, y-cart_height/2), cart_width, cart_height, fill=True, color=color)
+        line_start = (x, y) # x,y
+        # line_end = (x - pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line_end = (x + pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line = plt.Line2D([line_start[0], line_end[0]], [line_start[1], line_end[1]], color=color)
+        ax.add_line(line)
+        ax.add_patch(rect)
+
+        # Render the figure to a NumPy array
+        fig.canvas.draw()  # Render the figure
+        buf = BytesIO()
+        fig.savefig(buf, format="png", bbox_inches='tight')
+        buf.seek(0)
+        img = Image.open(buf)
+        img_array = np.array(img)
+        buf.close()
+
+        plt.close(fig)  # Close the figure to release memory
+        return img_array
+
+
+# NOTE: Same as CartPole but the avoid sdf (only important for rendering) can be specified after initialization 
+# Unsafe things don't need to be specified when initalizing 
+class BaseCartPole(Dynamics): 
+    # Following dynamics from: https://arxiv.org/pdf/2206.03568 
+    # NOTE: want to follow dynamics from: https://arxiv.org/pdf/1903.08792 
+
+    def __init__(self, gravity: float, umax: float, length: float, mass_cart: float, mass_pole: float,
+                 x_dist: float, theta_dist: float, vel_dist: float, thetadot_dist: float, # disturbance bound parameters
+                 tMin: float=0.0, tMax: float=1.0):
+        """
+        args: 
+            - unsafe_theta_in_range: 
+                - True:  when True the unsafe theta are described in the range
+                - False: when False the range describes the safe theta - and out of range is the unsafe theta 
+        """
+        import numpy as np 
+
+        self.gravity = gravity 
+        self.tMin = tMin 
+        self.tMax = tMax 
+
+        # cartpole parameters
+        self.gravity = gravity 
+        self.length = length 
+        self.m_c = mass_cart
+        self.m = mass_pole 
+
+        # control and disturbance parameters 
+        self.umax = umax
+        
+        self.x_dist = x_dist 
+        self.theta_dist = theta_dist
+        self.vel_dist = vel_dist 
+        self.thetadot_dist = thetadot_dist 
+
+
+        # Initialize boundary function - start with safe everywhere 
+        self.boundary_function = lambda x: torch.ones(x[..., 0].shape).to(x.device)
+
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid', 
+            state_dim=2, input_dim=3, control_dim=1, disturbance_dim=2, 
+            state_mean=[np.pi, 0], # NOTE: TODO: Check this - print a bunch of states and see what the case is ? 
+            state_var=[np.pi, 1], # NOTE: TODO: check the angular velocity range 
+            value_mean=0.2, # NOTE: TODO: check this ? - ask sander - check all the ones below ...
+            value_var=0.5, 
+            value_normto=0.02, 
+            deepreach_model='vanilla', 
+            periodic_dims=[0,1] 
+        )
+        return 
+
+    def state_test_range(self):
+        raise NotImplementedError
+    
+    def equivalent_wrapped_state(self): 
+        raise NotImplementedError
+    
+   
+    # Dynamics: TODO: add dynamics equations here 
+    def dsdt(self, state, control, disturbance, time):
+        raise NotImplementedError
+
+    def init_boundary_fn(self, func):
+        """
+        Function to initialize boundary function for cartpole: 
+        This is the function that will be used for the boundary function 
+            - NOTE: right now honestly only used for rendering 
+        args: 
+            - func: function that takes in state and returns the avoid value 
+        """
+        self.boundary_function = func 
+        return 
+    
+    def boundary_fn(self, state): 
+        return self.boundary_function(state)
+    
+    def sample_target_state(self, num_samples): 
+        raise NotImplementedError
+
+    def cost_fn(self, state_traj): 
+        raise NotImplementedError
+    
+    def hamiltonian(self, state, time, dvds):
+        raise NotImplementedError
+    
+    def optimal_control(self, state, dvds): 
+        raise NotImplementedError
+    
+    def optimal_disturbance(self, state, dvds):
+        raise NotImplementedError
+    
+    def plot_config(self): 
+        raise NotImplementedError
+
+    def is_unsafe(self, state): 
+        """
+        Returns boolean if the cartpole is in the unsafe region
+        """
+        return self.boundary_fn(state) < 0 
+
+    def render(self, state):
+        """
+        Renders the cartpole environment and returns it as a NumPy array.
+
+        Args:
+            state (list or np.ndarray): The state of the cartpole [x, theta, x_dot, theta_dot].
+        Returns:
+            np.ndarray: The rendered image as a NumPy array.
+        """
+        pole_length = self.length 
+        cart_width = self.length/2
+        cart_height = self.length/4
+
+        x, theta, _, _ = state
+        y=0
+
+        # Ensure theta is between -np.pi and np.pi
+        theta = (theta + np.pi) % (2 * np.pi) - np.pi
+
+        # Create the figure and axes
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.set_xlim(-2, 2)  # Set x-axis limits
+        ax.set_ylim(-1.5, 1.5)  # Set y-axis limits
+        ax.set_aspect('equal')
+        ax.set_title(f"Cartpole: {(np.round(x.item(), decimals=3) , np.round(theta.item(), decimals=3))}")
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        
+        if self.is_unsafe(state): 
+            color = 'red'
+        else: 
+            color = 'blue'
+
+        # Plot the patches 
+        rect = plt.Rectangle((x-cart_width/2, y-cart_height/2), cart_width, cart_height, fill=True, color=color)
+        line_start = (x, y) # x,y
+        # line_end = (x - pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line_end = (x + pole_length*np.sin(theta), y + pole_length*np.cos(theta)) # x,y
+        line = plt.Line2D([line_start[0], line_end[0]], [line_start[1], line_end[1]], color=color)
+        ax.add_line(line)
+        ax.add_patch(rect)
+
+        # Render the figure to a NumPy array
+        fig.canvas.draw()  # Render the figure
+        buf = BytesIO()
+        fig.savefig(buf, format="png", bbox_inches='tight')
+        buf.seek(0)
+        img = Image.open(buf)
+        img_array = np.array(img)
+        buf.close()
+
+        plt.close(fig)  # Close the figure to release memory
+        return img_array
 
 
 if __name__ == "__main__":
