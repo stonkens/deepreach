@@ -175,8 +175,13 @@ dataset = dataio.ReachabilityDataset(
     counter_start=orig_opt.counter_start, counter_end=orig_opt.counter_end, 
     num_src_samples=orig_opt.num_src_samples, num_target_samples=orig_opt.num_target_samples)
 
-model = modules.SingleBVPNet(in_features=dynamics.input_dim, out_features=1, type=orig_opt.model, mode=orig_opt.model_mode,
-                             final_layer_factor=1., hidden_features=orig_opt.num_nl, num_hidden_layers=orig_opt.num_hl)
+model = modules.SingleBVPNetKAN(in_features=dynamics.input_dim, out_features=1, type=orig_opt.model, mode=orig_opt.model_mode,
+                             final_layer_factor=1., hidden_features=16,#16, 
+                             num_hidden_layers=3 ) #orig_opt.num_hl)
+print("\n\n\nUSING KAN MODEL\n\n\n")
+
+# model = modules.SingleBVPNet(in_features=dynamics.input_dim, out_features=1, type=orig_opt.model, mode=orig_opt.model_mode,
+#                              final_layer_factor=1., hidden_features=orig_opt.num_nl, num_hidden_layers=orig_opt.num_hl)
 if torch.cuda.is_available():
     device = torch.device("cuda")
     model.to(device)

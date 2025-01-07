@@ -138,6 +138,54 @@ class SingleBVPNet(nn.Module):
         return {'model_in': coords_org, 'model_out': output}
 
 
+###################################################################################
+################################# START KAN TRIAL #################################
+###################################################################################
+
+# NOTE: later if this shows promise change the mode to include KAN as an option and then have some context flipping there ? 
+try: 
+    from kan import KAN
+except: 
+    from utils.kan import KAN
+class SingleBVPNetKAN(nn.Module):
+    """
+    A canonical representation network for a BVP using KAN.
+    """
+    def __init__(self, out_features=1, type='sine', in_features=2,
+                 mode='mlp', hidden_features=32, num_hidden_layers=3, 
+                 # START: KAN specific
+                 grid_size=10, grid_range=[-1, 1], spline_order=3, base_activation=torch.nn.SiLU,
+                 # END: KAN specific
+                 **kwargs):
+        super().__init__()
+
+        self.mode = mode
+        layer_sizes = [in_features] + [hidden_features for _ in range(num_hidden_layers)] + [out_features]
+        self.net = KAN(layers_hidden=layer_sizes, grid_size=grid_size, grid_range=grid_range, spline_order=spline_order, base_activation=base_activation)
+        self.layer_sizes = layer_sizes
+        print(self)
+
+    def forward(self, model_input, params=None):
+        if params is None:
+            params = OrderedDict(self.named_parameters())
+
+        # Enables us to compute gradients w.r.t. coordinates
+        # TODO: should not need to .clone().detach().requires_grad_(True); instead, use .retain_grad() on input in calling script
+        # otherwise, .detach() removes input from the graph so grad cannot propagate back end-to-end, e.g., percept -> NN -> state estimation (input)
+        coords_org = model_input['coords'].clone().detach().requires_grad_(True)
+        coords = coords_org
+
+        output = self.net(coords[0])
+        output = output.unsqueeze(0)
+
+        return {'model_in': coords_org, 'model_out': output}
+
+
+
+###################################################################################
+################################# END KAN TRIAL ###################################
+###################################################################################
+
 ########################
 # Initialization methods
 def init_weights_normal(m):

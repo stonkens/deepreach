@@ -322,52 +322,55 @@ class Experiment(ABC):
                         optim.step(closure)
 
                     # Adjust the relative magnitude of the losses if required
-                    if self.dataset.dynamics.deepreach_model in ['vanilla', 'diff'] and adjust_relative_grads:
-                        if losses['diff_constraint_hom'] > 0.01:
-                            params = OrderedDict(self.model.named_parameters())
-                            # Gradients with respect to the PDE loss
-                            optim.zero_grad()
-                            losses['diff_constraint_hom'].backward(retain_graph=True)
-                            grads_PDE = []
-                            for key, param in params.items():
-                                grads_PDE.append(param.grad.view(-1))
-                            grads_PDE = torch.cat(grads_PDE)
+                    try: 
+                        if self.dataset.dynamics.deepreach_model in ['vanilla', 'diff'] and adjust_relative_grads:
+                            if losses['diff_constraint_hom'] > 0.01:
+                                params = OrderedDict(self.model.named_parameters())
+                                # Gradients with respect to the PDE loss
+                                optim.zero_grad()
+                                losses['diff_constraint_hom'].backward(retain_graph=True)
+                                grads_PDE = []
+                                for key, param in params.items():
+                                    grads_PDE.append(param.grad.view(-1))
+                                grads_PDE = torch.cat(grads_PDE)
 
-                            # Gradients with respect to the boundary loss
-                            optim.zero_grad()
-                            losses['dirichlet'].backward(retain_graph=True)
-                            grads_dirichlet = []
-                            for key, param in params.items():
-                                grads_dirichlet.append(param.grad.view(-1))
-                            grads_dirichlet = torch.cat(grads_dirichlet)
+                                # Gradients with respect to the boundary loss
+                                optim.zero_grad()
+                                losses['dirichlet'].backward(retain_graph=True)
+                                grads_dirichlet = []
+                                for key, param in params.items():
+                                    grads_dirichlet.append(param.grad.view(-1))
+                                grads_dirichlet = torch.cat(grads_dirichlet)
 
-                            # # Plot the gradients
-                            # import seaborn as sns
-                            # import matplotlib.pyplot as plt
-                            # fig = plt.figure(figsize=(5, 5))
-                            # ax = fig.add_subplot(1, 1, 1)
-                            # ax.set_yscale('symlog')
-                            # sns.distplot(grads_PDE.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
-                            # sns.distplot(grads_dirichlet.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
-                            # fig.savefig('gradient_visualization.png')
+                                # # Plot the gradients
+                                # import seaborn as sns
+                                # import matplotlib.pyplot as plt
+                                # fig = plt.figure(figsize=(5, 5))
+                                # ax = fig.add_subplot(1, 1, 1)
+                                # ax.set_yscale('symlog')
+                                # sns.distplot(grads_PDE.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
+                                # sns.distplot(grads_dirichlet.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
+                                # fig.savefig('gradient_visualization.png')
 
-                            # fig = plt.figure(figsize=(5, 5))
-                            # ax = fig.add_subplot(1, 1, 1)
-                            # ax.set_yscale('symlog')
-                            # grads_dirichlet_normalized = grads_dirichlet * torch.mean(torch.abs(grads_PDE))/torch.mean(torch.abs(grads_dirichlet))
-                            # sns.distplot(grads_PDE.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
-                            # sns.distplot(grads_dirichlet_normalized.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
-                            # ax.set_xlim([-1000.0, 1000.0])
-                            # fig.savefig('gradient_visualization_normalized.png')
+                                # fig = plt.figure(figsize=(5, 5))
+                                # ax = fig.add_subplot(1, 1, 1)
+                                # ax.set_yscale('symlog')
+                                # grads_dirichlet_normalized = grads_dirichlet * torch.mean(torch.abs(grads_PDE))/torch.mean(torch.abs(grads_dirichlet))
+                                # sns.distplot(grads_PDE.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
+                                # sns.distplot(grads_dirichlet_normalized.cpu().numpy(), hist=False, kde_kws={"shade": False}, norm_hist=True)
+                                # ax.set_xlim([-1000.0, 1000.0])
+                                # fig.savefig('gradient_visualization_normalized.png')
 
-                            # Set the new weight according to the paper
-                            # num = torch.max(torch.abs(grads_PDE))
-                            num = torch.mean(torch.abs(grads_PDE))
-                            den = torch.mean(torch.abs(grads_dirichlet))
-                            new_weight = 0.9*new_weight + 0.1*num/den
-                            losses['dirichlet'] = new_weight*losses['dirichlet']
-                        writer.add_scalar('weight_scaling', new_weight, total_steps)
+                                # Set the new weight according to the paper
+                                # num = torch.max(torch.abs(grads_PDE))
+                                num = torch.mean(torch.abs(grads_PDE))
+                                den = torch.mean(torch.abs(grads_dirichlet))
+                                new_weight = 0.9*new_weight + 0.1*num/den
+                                losses['dirichlet'] = new_weight*losses['dirichlet']
+                            writer.add_scalar('weight_scaling', new_weight, total_steps)
 
+                    except: 
+                        pass 
                     # import ipdb; ipdb.set_trace()
 
                     train_loss = 0.
