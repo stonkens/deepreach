@@ -135,6 +135,12 @@ class VisualizeSafeSet2D(EvaluationMetric):
                 with torch.no_grad():
                     values = model_eval(coords)
                     sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(values.device))
+                    if self.dataset.dynamics.loss_type == 'brat_hjivi':
+                        avoid_values = self.dataset.dynamics.avoid_fn(coords[:, 1:].to(values.device))
+                        reach_values = self.dataset.dynamics.reach_fn(coords[:, 1:].to(values.device))
+                    elif self.dataset.dynamics.loss_type == 'brat_ci_hjivi':
+                        avoid_values = self.dataset.dynamics.avoid_fn(coords[:, 1:].to(values.device))
+                        reach_values = self.dataset.dynamics.reach_fn(coords[:, 1:].to(values.device))
 
                 ax = fig.add_subplot(gs[i, j])
 
@@ -153,8 +159,12 @@ class VisualizeSafeSet2D(EvaluationMetric):
                     # Go from xs to (-1, 1) and ys to (-1, 1)
                 elif vis_type == "contourf":
                     s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
-                    
-                ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+                
+                if self.dataset.dynamics.loss_type == 'brt_hjivi':
+                    ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+                else:
+                    ax.contour(xs_plot, ys_plot, avoid_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+                    ax.contour(xs_plot, ys_plot, reach_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='green')
                 ax.set_title(ax_title)
 
             cax = fig.add_subplot(gs[i, -1])
@@ -644,7 +654,12 @@ class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories):
         coords[:, :] = torch.tensor(plot_config['state_slices'])
         coords[:, plot_config['x_axis_idx']] = xys[:, 0]
         coords[:, plot_config['y_axis_idx']] = xys[:, 1]
-        sdf_values = self.dynamics.boundary_fn(coords)
+        if self.dynamics.loss_type == 'brt_hjivi':
+            sdf_values = self.dynamics.boundary_fn(coords)
+        else:
+            avoid_values = self.dynamics.avoid_fn(coords)
+            reach_values = self.dynamics.reach_fn(coords)
+            sdf_values = self.dynamics.boundary_fn(coords)
         
         fig = plt.figure()
         ax = fig.add_subplot(111)
@@ -656,7 +671,11 @@ class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories):
                 log_dict['trajectories'][:, :1, plot_config['y_axis_idx']].T, 'ro')
         ax.plot(log_dict['trajectories'][:, -1:, plot_config['x_axis_idx']].T, 
                 log_dict['trajectories'][:, -1:, plot_config['y_axis_idx']].T, 'go')
-        ax.contour(xs, ys, sdf_values.reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+        if self.dynamics.loss_type == 'brt_hjivi':
+            ax.contour(xs, ys, sdf_values.reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+        else:
+            ax.contour(xs, ys, avoid_values.reshape(x_resolution, y_resolution).T, levels=[0], colors='red')
+            ax.contour(xs, ys, reach_values.reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
         ax.contourf(xs, ys, sdf_values.reshape(x_resolution, y_resolution).T, alpha=0.5)
         rollout_trajectory_figure = wandb.Image(fig)
         log_dict.update({'rollout_trajectory': rollout_trajectory_figure})

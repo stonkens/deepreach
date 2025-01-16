@@ -38,15 +38,40 @@ class GroundTruthHJSolution:
         state_domain = hj.sets.Box(lo=state_lo, hi=state_hi)
         
         self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution, periodic_dims=self.hj_dynamics.periodic_dims)
-        sdf_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
-        backwards_reachable_tube = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
+        
+        self.loss_type = self.hj_dynamics.torch_dynamics.loss_type
+        self.set_mode = self.hj_dynamics.torch_dynamics.set_mode
+        if self.loss_type == 'brt_hjivi':
+            # Distinguish between reach and avoid
+            self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
+            brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
+            postprocessor = brt(self.avoid_values)
+            self.boundary_values = self.avoid_values
+        elif self.loss_type == 'brat_ci_hjivi':
+            self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)))
+            self.reach_values = t2j(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)))
+            self.boundary_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
+            brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
+            postprocessor = brt(self.avoid_values)
+        elif self.loss_type == 'brat_hjivi':
+            # By convention, we always "max" u and "min" d in hj_reachability, hence some flipping required
+            # avoid_fn is defined such that avoid_fn >= 0 <=> in non-avoid region (also in HJR)
+            # reach_fn is defined such that reach_fn <= 0 <=> in reach region (flipped in HJR)
+            self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)))
+            self.reach_values = -t2j(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)))
+            self.boundary_values = -t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
+            brat = lambda obstacle, target: (lambda t, x: jnp.minimum(jnp.maximum(x, target), obstacle))
+            postprocessor = brat(self.avoid_values, self.reach_values)
+        
+
         solver_settings = hj.SolverSettings.with_accuracy("very_high", 
-                                                          value_postprocessor=backwards_reachable_tube(sdf_values))
+                                                          value_postprocessor=postprocessor)
         min_time = self.hj_dynamics.tMin
         max_time = -self.hj_dynamics.tMax
         self.times = jnp.linspace(min_time, max_time, 5)  # FIXME: Hardcoded (has to be same  as with QuantifyBinary)
         self.value_functions = hj.solve(solver_settings, self.hj_dynamics, self.grid, self.times, 
-                                        sdf_values, progress_bar=True)
+                                        self.boundary_values, progress_bar=True)
+        # TODO: Maybe negative for brat_hjivi
         self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
         self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0, 0, 0, 0))
         self.optimal_control_and_disturbance_f = jax.vmap(self.hj_dynamics.optimal_control_and_disturbance, in_axes=(0, 0, 0))

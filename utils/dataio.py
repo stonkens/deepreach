@@ -44,7 +44,9 @@ class ReachabilityDataset(Dataset):
         if self.dynamics.loss_type == 'brat_hjivi':
             reach_values = self.dynamics.reach_fn(self.dynamics.input_to_coord(model_coords)[..., 1:])
             avoid_values = self.dynamics.avoid_fn(self.dynamics.input_to_coord(model_coords)[..., 1:])
-        
+        elif self.dynamics.loss_type == 'brat_ci_hjivi':
+            avoid_values = self.dynamics.avoid_fn(self.dynamics.input_to_coord(model_coords)[..., 1:])
+            reach_values = self.dynamics.reach_fn(self.dynamics.input_to_coord(model_coords)[..., 1:])
         if self.pretrain:
             dirichlet_masks = torch.ones(model_coords.shape[0]) > 0
         else:
@@ -61,6 +63,8 @@ class ReachabilityDataset(Dataset):
 
         if self.dynamics.loss_type == 'brt_hjivi':
             return {'model_coords': model_coords}, {'boundary_values': boundary_values, 'dirichlet_masks': dirichlet_masks}
+        elif self.dynamics.loss_type == 'brat_ci_hjivi':
+            return {'model_coords': model_coords}, {'boundary_values': boundary_values, 'reach_values': reach_values, 'avoid_values': avoid_values, 'dirichlet_masks': dirichlet_masks}
         elif self.dynamics.loss_type == 'brat_hjivi':
             return {'model_coords': model_coords}, {'boundary_values': boundary_values, 'reach_values': reach_values, 'avoid_values': avoid_values, 'dirichlet_masks': dirichlet_masks}
         else:

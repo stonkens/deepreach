@@ -46,8 +46,10 @@ class Dynamics(ABC):
         self.value_var = value_var
         self.value_normto = value_normto
         self.deepreach_model = deepreach_model
-        assert self.loss_type in ['brt_hjivi', 'brat_hjivi'], f'loss type {self.loss_type} not recognized'
+        assert self.loss_type in ['brt_hjivi', 'brat_ci_hjivi', 'brat_hjivi'], f'loss type {self.loss_type} not recognized'
         if self.loss_type == 'brat_hjivi':
+            assert callable(self.reach_fn) and callable(self.avoid_fn)
+        elif self.loss_type == 'brat_ci_hjivi':
             assert callable(self.reach_fn) and callable(self.avoid_fn)
         assert self.set_mode in ['reach', 'avoid'], f'set mode {self.set_mode} not recognized'
         for state_descriptor in [self.state_mean, self.state_var]:
@@ -796,6 +798,349 @@ class Quad2DAttitude(Dynamics):
             'y_axis_idx': 1,
             'z_axis_idx': [2, 3],
         }
+
+
+class Quad2DAttitudeReachAvoid(Dynamics):
+    def __init__(self, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, max_pos_dist: float = 0.0, 
+                 max_vel_dist: float = 0.0, set_mode: str='avoid'):
+        self.gravity = gravity
+        self.max_angle = max_angle
+        self.min_thrust = min_thrust
+        self.max_thrust = max_thrust
+        self.max_pos_dist = max_pos_dist
+        self.max_vel_dist = max_vel_dist
+        from utils import boundary_functions
+        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+        self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+
+        self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0])
+        self.sdf_reach = self.target_region.boundary_sdf
+        
+        from utils.boundary_functions import InputSet
+        # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+        # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+        self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
+        self.disturbance_space = InputSet(lo=[-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist], 
+                                     hi=[max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist])
+        super().__init__(
+            loss_type='brat_ci_hjivi', set_mode=set_mode,
+            state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
+            state_mean=[0., 1.3, 0, 0],
+            state_var=[5., 1.5, 2, 2],
+            periodic_dims=[],
+            value_mean=0.2,
+            value_var=0.5,
+            value_normto=0.02,
+            deepreach_model="vanilla"
+        )
+
+    def state_test_range(self):
+        return [
+            [-5, 5], 
+            [-0.2, 2.8],
+            [-1.4, 1.4],
+            [-1.4, 1.4]
+        ]
+    
+    # Quadcopter Dynamics
+    # \dot y = v_y + d_1
+    # \dot z = v_z + d_2
+    # \dot v_y = g * u_1 + d_3
+    # \dot v_z = u_2 - g + d_4
+    def dsdt(self, state, control, disturbance, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
+        dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
+        dsdt[..., 2] = self.gravity * control[..., 0] + disturbance[..., 2]
+        dsdt[..., 3] = control[..., 1] - self.gravity + disturbance[..., 3]
+        return dsdt
+
+    def reach_fn(self, state):
+        # Not negated here, to be positive in the target region
+        return self.sdf_reach(state)
+    
+    def avoid_fn(self, state):
+        return self.sdf_avoid(state)
+    
+    def open_loop_dynamics(self, state, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] 
+        dsdt[..., 1] = state[..., 3] 
+        dsdt[..., 2] = 0
+        dsdt[..., 3] = - self.gravity 
+        return dsdt
+
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        # torch.tensor([
+        #     [0., 0.],
+        #     [0., 0.],
+        #     [self.gravity, 0.],
+        #     [0., 1.],
+        # ])
+        
+        control_jacobian[..., 2, 0] = self.gravity
+        control_jacobian[..., 3, 1] = 1.0
+        return control_jacobian
+        
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        # torch.tensor([
+        #     [1., 0., 0., 0.],
+        #     [0., 1., 0., 0.],
+        #     [0., 0., 1., 0.],
+        #     [0., 0., 0., 1.],
+        # ])
+
+        disturbance_jacobian[..., 0, 0] = 1.0
+        disturbance_jacobian[..., 1, 1] = 1.0
+        disturbance_jacobian[..., 2, 2] = 1.0
+        disturbance_jacobian[..., 3, 3] = 1.0
+        return disturbance_jacobian
+
+    def boundary_fn(self, state):
+        return torch.minimum(self.avoid_fn(state), self.reach_fn(state))
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        reach_values = self.reach_fn(state_traj)
+        avoid_values = self.avoid_fn(state_traj)
+        # Situations:
+        # 1. If we start in target outside of obstacle, at time 0 inner is > 0 -> cost > 0
+        # 2. If we reach target before hitting obstacle, at that time cummin(avoid) > 0 & reach_values > 0 -> cost > 0
+        # 3. If we hit obstacle before reaching target, at that time cummin(avoid) < 0 & reach_values > 0 -> cost < 0
+
+        return torch.max(torch.minimum(reach_values, torch.cummin(avoid_values, dim=-1).values), dim=-1).values
+
+    def hamiltonian(self, state, time, dvds):
+        optimal_control = self.optimal_control(state, dvds)
+        optimal_disturbance = self.optimal_disturbance(state, dvds)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
+        return torch.sum(flow*dvds, dim=-1)
+    
+    def optimal_control(self, state, dvds):
+        if self.set_mode == "avoid":
+            # a1 = torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.min_thrust + torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
+        elif self.set_mode == "reach":
+            # a1 = -torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.max_thrust - torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((a1[..., None], a2[..., None]), dim=-1)
+
+    def optimal_disturbance(self, state, dvds):
+        if self.set_mode == "avoid":
+            # d1 = -torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
+        elif self.set_mode == "reach":
+            # d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] < 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] < 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] < 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] < 0, -self.max_vel_dist, self.max_vel_dist)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
+    
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['y', 'z', r'$v_y$', r'$v_z$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+
+
+class Quad2DAttitudeReachAvoidOriginal(Dynamics):
+    def __init__(self, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, max_pos_dist: float = 0.0, 
+                 max_vel_dist: float = 0.0, set_mode: str='reach'):
+        self.gravity = gravity
+        self.max_angle = max_angle
+        self.min_thrust = min_thrust
+        self.max_thrust = max_thrust
+        self.max_pos_dist = max_pos_dist
+        self.max_vel_dist = max_vel_dist
+        from utils import boundary_functions
+        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+        self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])  # Negative when in obstacle
+
+        self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0])
+        self.sdf_reach = self.target_region.boundary_sdf  # Currently positive when in target region
+        
+        from utils.boundary_functions import InputSet
+        # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+        # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+        self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
+        self.disturbance_space = InputSet(lo=[-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist], 
+                                     hi=[max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist])
+        super().__init__(
+            loss_type='brat_hjivi', set_mode=set_mode,
+            state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
+            state_mean=[0., 1.3, 0, 0],
+            state_var=[5., 1.5, 2, 2],
+            periodic_dims=[],
+            value_mean=0.2,
+            value_var=0.5,
+            value_normto=0.02,
+            deepreach_model="vanilla"
+        )
+
+    def state_test_range(self):
+        return [
+            [-5, 5], 
+            [-0.2, 2.8],
+            [-1.4, 1.4],
+            [-1.4, 1.4]
+        ]
+    
+    # Quadcopter Dynamics
+    # \dot y = v_y + d_1
+    # \dot z = v_z + d_2
+    # \dot v_y = g * u_1 + d_3
+    # \dot v_z = u_2 - g + d_4
+    def dsdt(self, state, control, disturbance, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] + disturbance[..., 0]
+        dsdt[..., 1] = state[..., 3] + disturbance[..., 1]
+        dsdt[..., 2] = self.gravity * control[..., 0] + disturbance[..., 2]
+        dsdt[..., 3] = control[..., 1] - self.gravity + disturbance[..., 3]
+        return dsdt
+    
+    def open_loop_dynamics(self, state, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = state[..., 2] 
+        dsdt[..., 1] = state[..., 3] 
+        dsdt[..., 2] = 0
+        dsdt[..., 3] = - self.gravity 
+        return dsdt
+
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        # torch.tensor([
+        #     [0., 0.],
+        #     [0., 0.],
+        #     [self.gravity, 0.],
+        #     [0., 1.],
+        # ])
+        
+        control_jacobian[..., 2, 0] = self.gravity
+        control_jacobian[..., 3, 1] = 1.0
+        return control_jacobian
+        
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        # torch.tensor([
+        #     [1., 0., 0., 0.],
+        #     [0., 1., 0., 0.],
+        #     [0., 0., 1., 0.],
+        #     [0., 0., 0., 1.],
+        # ])
+
+        disturbance_jacobian[..., 0, 0] = 1.0
+        disturbance_jacobian[..., 1, 1] = 1.0
+        disturbance_jacobian[..., 2, 2] = 1.0
+        disturbance_jacobian[..., 3, 3] = 1.0
+        return disturbance_jacobian
+
+    def reach_fn(self, state):
+        # Negated to be negative in target region
+        return -self.sdf_reach(state)
+    
+    def avoid_fn(self, state):
+        return self.sdf_avoid(state)
+
+    def boundary_fn(self, state):
+        return torch.maximum(self.reach_fn(state), -self.avoid_fn(state))
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError  # FIXME: Do we need this?
+    
+    def cost_fn(self, state_traj):
+        reach_values = self.reach_fn(state_traj)
+        avoid_values = -self.avoid_fn(state_traj)
+        # Situations:
+        # 1. If we start in target outside of obstacle \exists reach_values < 0 and cummax(-avoid_values) < 0 -> cost < 0
+        # 2. If we reach target before hitting obstacle \exists reach_values < 0 and cummax(-avoid_values) < 0 -> cost < 0
+        # 3. If we hit obstacle before reaching target \exists reach_values > 0 and cummax(-avoid_values) > 0 -> cost > 0
+        # 4. If we hit obstacle after reaching target \exists reach_values < 0 and cummax(-avoid_values) < 0 -> cost < 0
+        return torch.min(torch.maximum(reach_values, torch.cummax(-avoid_values, dim=-1).values), dim=-1).values
+
+    def hamiltonian(self, state, time, dvds):
+        optimal_control = self.optimal_control(state, dvds)
+        optimal_disturbance = self.optimal_disturbance(state, dvds)
+        flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
+        return torch.sum(flow*dvds, dim=-1)
+    
+    def optimal_control(self, state, dvds):
+        if self.set_mode == "avoid":
+            # a1 = torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.min_thrust + torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
+        elif self.set_mode == "reach":
+            # a1 = -torch.sign(dvds[..., 2]) * self.max_angle
+            # a2 = self.max_thrust - torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+            a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
+            a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((a1[..., None], a2[..., None]), dim=-1)
+
+    def optimal_disturbance(self, state, dvds):
+        if self.set_mode == "avoid":
+            # d1 = -torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
+        elif self.set_mode == "reach":
+            # d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
+            # d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
+            # d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
+            # d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
+            d1 = torch.where(dvds[..., 0] < 0, -self.max_pos_dist, self.max_pos_dist)
+            d2 = torch.where(dvds[..., 1] < 0, -self.max_pos_dist, self.max_pos_dist)
+            d3 = torch.where(dvds[..., 2] < 0, -self.max_vel_dist, self.max_vel_dist)
+            d4 = torch.where(dvds[..., 3] < 0, -self.max_vel_dist, self.max_vel_dist)
+        else:
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
+    
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['y', 'z', r'$v_y$', r'$v_z$'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+
 
 
 class NarrowPassage(Dynamics):

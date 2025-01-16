@@ -302,12 +302,17 @@ class Experiment(ABC):
                     if self.dataset.dynamics.loss_type == 'brat_hjivi':
                         reach_values = gt['reach_values']
                         avoid_values = gt['avoid_values']
+                    elif self.dataset.dynamics.loss_type == 'brat_ci_hjivi':
+                        reach_values = gt['reach_values']
+                        avoid_values = gt['avoid_values']
                     dirichlet_masks = gt['dirichlet_masks']
 
                     if self.dataset.dynamics.loss_type == 'brt_hjivi':
                         losses = loss_fn(states, times, values, dvs[..., 0], dvs[..., 1:], boundary_values, dirichlet_masks, model_results['model_out'])
                     elif self.dataset.dynamics.loss_type == 'brat_hjivi':
                         losses = loss_fn(states, times, values, dvs[..., 0], dvs[..., 1:], boundary_values, reach_values, avoid_values, dirichlet_masks, model_results['model_out'])
+                    elif self.dataset.dynamics.loss_type == 'brat_ci_hjivi':
+                        losses = loss_fn(states, times, values, dvs[..., 0], dvs[..., 1:], boundary_values, avoid_values, dirichlet_masks, model_results['model_out'])
                     else:
                         raise NotImplementedError
                     
