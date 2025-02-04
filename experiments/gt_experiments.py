@@ -88,7 +88,7 @@ class GT_VisualizeSafeSet2D(EvaluationMetric):
             num_zs = len(plot_config['z_axis_idx'])
             zs_size = [grid_states_shape[z_idx] for z_idx in plot_config['z_axis_idx']]
             z_res_offset = 2
-            zs_idxs = torch.tensor([np.linspace(0, zs_size[i]-1, z_resolution + z_res_offset) for i in range(num_zs)], dtype=torch.int)
+            zs_idxs = torch.tensor(np.array([np.linspace(0, zs_size[i]-1, z_resolution + z_res_offset) for i in range(num_zs)]), dtype=torch.int)
             
             zs_idxs = [zs_idxs[i][1:-1] for i in range(num_zs)]
             print("\n\nzs_idxs: ", zs_idxs)
@@ -106,6 +106,10 @@ class GT_VisualizeSafeSet2D(EvaluationMetric):
         y_resolution = grid_states_shape[1]
 
         for i in range(len(times)): 
+            if vis_type == "contourf":
+                all_values_in_row = []
+                all_titles_in_row = []
+
             for j in range(len(zs)):
                 # Create fixed slices of grid states to use for grid states when creating coords
                 grid_states_slices = [slice(None)] * len(grid_states_shape)               
@@ -126,36 +130,62 @@ class GT_VisualizeSafeSet2D(EvaluationMetric):
                         avoid_values = self.dataset.dynamics.avoid_fn(coords[:, 1:].to(values.device))
                         reach_values = self.dataset.dynamics.reach_fn(coords[:, 1:].to(values.device))
 
-                ax = fig.add_subplot(gs[i, j])
+                xs_plot = np.linspace(-1, 1, x_resolution)
+                ys_plot = np.linspace(-1, 1, y_resolution)
 
+                # Create title
                 individual_coords = coords[0][1:].clone().detach() # individual example of coords - to grab slice values 
                 if isinstance(plot_config['z_axis_idx'], list):
                     ax_title = 't = %0.2f, %s' % (
                         times[i],
                         ', '.join(['%s = %0.2f' % (plot_config['state_labels'][z_idx], 
-                                                   individual_coords[z_idx].item()) # get the actual value from a state
-                                   for k, z_idx in enumerate(plot_config['z_axis_idx'])])
+                                                individual_coords[z_idx].item()) # get the actual value from a state
+                                for k, z_idx in enumerate(plot_config['z_axis_idx'])])
                     )
                 else:
                     ax_title = 't = %0.2f, %s = %0.2f' % (times[i], plot_config['state_labels'][plot_config['z_axis_idx']], individual_coords[zs[j]].item()) 
-
-                xs_plot = np.linspace(-1, 1, x_resolution)
-                ys_plot = np.linspace(-1, 1, y_resolution)
-                if vis_type == "imshow": 
+                
+                if vis_type == "imshow":
+                    ax = fig.add_subplot(gs[i, j])
                     s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
                     # Go from xs to (-1, 1) and ys to (-1, 1)
-                elif vis_type == "contourf":
-                    s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
 
-                if self.dataset.dynamics.loss_type == 'brt_hjivi':
-                    ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
-                else:
-                    ax.contour(xs_plot, ys_plot, avoid_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
-                    ax.contour(xs_plot, ys_plot, reach_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='green')
-                ax.set_title(ax_title)
+                    if self.dataset.dynamics.loss_type == 'brt_hjivi':
+                        ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+                    else:
+                        ax.contour(xs_plot, ys_plot, avoid_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
+                        ax.contour(xs_plot, ys_plot, reach_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='green')
+
+                    ax.set_title(ax_title)
+
+                elif vis_type == "contourf":
+                    # s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
+                    # store values later for plotting 
+                    all_values_in_row.append(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
+                    all_titles_in_row.append(ax_title)
+                    continue 
+            
+            if vis_type == "imshow":
+                cax = fig.add_subplot(gs[i, -1])
+                fig.colorbar(s, cax=cax, orientation='vertical')
+                cax = fig.add_subplot(gs[i, -1])
+                cbar = fig.colorbar(s, cax=cax, orientation='vertical')
+
+            elif vis_type == "contourf":
+                # Get the min max value and then plot 
+                min_value = min([np.min(row_values) for row_values in all_values_in_row])
+                max_value = max([np.max(row_values) for row_values in all_values_in_row])   
+                for j in range(len(zs)):
+                    ax = fig.add_subplot(gs[i, j])
+                    s = ax.contourf(xs_plot, ys_plot, all_values_in_row[j], vmin=min_value, vmax=max_value)
+
+                    individual_coords = coords[0][1:].clone().detach() # individual example of coords - to grab slice values 
+                    ax_title = all_titles_in_row[j]
+                    
+                    ax.set_title(ax_title)
+                    fig.colorbar(s, ax=ax)
+
                 
-            cax = fig.add_subplot(gs[i, -1])
-            fig.colorbar(s, cax=cax, orientation='vertical')
 
         fig.tight_layout()
         if self.save_path is not None: 
@@ -454,8 +484,8 @@ class GTExperiment(ABC):
                 model_coords = model_coords.to(self.device)
                 gt_value = gt_value.to(self.device)
 
-                model_results = self.model({"coords": model_coords})
-                model_value = model_results['model_out'].squeeze(dim=-1)
+                model_results = self.model({"coords": model_coords}) # model_coords normalized during dataset creation. 
+                model_value = self.dataset.dynamics.io_to_value(input=model_results["model_in"].detach(), output=model_results['model_out'].squeeze(dim=-1)) # unnormalize the outputted value.
                 train_loss = loss_fn(model_value, gt_value)
 
                 if not use_lbfgs:

@@ -46,6 +46,32 @@ class GTReachabilityDataset(Dataset):
         self.times = torch.tensor(np.array(self.gt_hj_solution.times), dtype=torch.float32) 
         self.all_states = torch.tensor(np.array(self.grid.states), dtype=torch.float32)
         self.values = torch.tensor(np.array(self.gt_hj_solution.value_functions), dtype=torch.float32)
+        
+
+        # ######  TODO: REMOVE: FOR QUICKER DEBUGGING ######
+        # z_resolution = 3
+        # z_res_offset = 2
+        # num_zs = 3
+        # zs_size = [self.grid.states.shape[z_idx] for z_idx in [2, 3]]
+        # zs_idxs = torch.tensor(np.array([np.linspace(0, zs_size[i]-1, z_resolution + z_res_offset) for i in [2, 3]]), dtype=torch.int)
+            
+        # zs_idxs = [zs_idxs[i][1:-1] for i in range(num_zs)]
+        # zs = torch.cartesian_prod(*zs_idxs)
+
+        # new_shape = list(self.grid.states.shape)
+        # new_shape[2] = z_resolution + z_res_offset
+        # new_shape[3] = z_resolution + z_res_offset
+
+        # self.grid = self.gt_hj_solution.grid
+        # self.times = torch.tensor(np.array(self.gt_hj_solution.times), dtype=torch.float32) 
+        # self.all_states = torch.zeros(new_shape) #torch.tensor(np.array(self.grid.states), dtype=torch.float32)
+        # self.values = torch.zeros(new_shape) #torch.tensor(np.array(self.gt_hj_solution.value_functions), dtype=torch.float32)
+        
+        # for zi in range(new_shape[2]):
+        #     for zj in range(new_shape[3]): 
+
+        
+        # ######  TODO: REMOVE: FOR QUICKER DEBUGGING ######
 
         self.total_shape = [len(self.times)]
         self.total_shape.extend(list(self.grid.states.shape[:-1]))
@@ -60,11 +86,12 @@ class GTReachabilityDataset(Dataset):
 
         grid_idx = np.unravel_index(idx, self.total_shape)
         
-        time = self.times[grid_idx[0]]
+        time = -1 * self.times[grid_idx[0]] # so that time is positive (for now ?)
         state = self.all_states[grid_idx[1], grid_idx[2], grid_idx[3], grid_idx[4]]
         try: 
-            model_coords = torch.cat((torch.tensor([time]), state), dim=0)
-            value = self.values[grid_idx]
+            coords = torch.cat((torch.tensor([time]), state), dim=0)
+            model_coords = self.dynamics.coord_to_input(coords) # normalized inputs
+            value = self.values[grid_idx] 
         except: 
             print("In get item of dataloader")
             import pdb; pdb.set_trace()
