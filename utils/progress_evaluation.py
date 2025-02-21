@@ -134,6 +134,8 @@ class VisualizeSafeSet2D(EvaluationMetric):
 
                 with torch.no_grad():
                     values = model_eval(coords)
+                    if not self.isHJR:
+                        values = - values # Flip to line up conventions: positive is safe 
                     sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(values.device))
                     if self.dataset.dynamics.loss_type == 'brat_hjivi':
                         avoid_values = self.dataset.dynamics.avoid_fn(coords[:, 1:].to(values.device))
@@ -155,10 +157,13 @@ class VisualizeSafeSet2D(EvaluationMetric):
                 xs_plot = np.linspace(-1, 1, x_resolution)
                 ys_plot = np.linspace(-1, 1, y_resolution)
                 if vis_type == "imshow":
-                    s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
+                    # s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
+                    s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T >= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.)) # change in conventions: positive is safe, safe = 1 
                     # Go from xs to (-1, 1) and ys to (-1, 1)
+                    fig.colorbar(s, ax=ax)
                 elif vis_type == "contourf":
                     s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
+                    fig.colorbar(s, ax=ax)
                 
                 if self.dataset.dynamics.loss_type == 'brt_hjivi':
                     ax.contour(xs_plot, ys_plot, sdf_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='black')
@@ -236,7 +241,8 @@ class VisualizeValueDifference2D(VisualizeSafeSet2D):
             else: 
                 gt_coords = x
 
-            return model_eval(x) - self.ground_truth.value_from_coords(gt_coords)
+            # Flip model_eval sign to line up conventions: positive is safe - typical deepreach is the opposite
+            return (-1 * model_eval(x)) - self.ground_truth.value_from_coords(gt_coords)
 
         log_dict = super().__call__(new_eval, model_eval_grad, vis_type='contourf')
         new_dict = {}

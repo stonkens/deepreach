@@ -987,7 +987,9 @@ class Quad2DAttitudeReachAvoidOriginal(Dynamics):
         rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
         self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])  # Negative when in obstacle
 
-        self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0])
+        self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0], 
+                                                        slope_change="outside", slope_factor=1)
+        print("Slope change factor is 10")
         self.sdf_reach = self.target_region.boundary_sdf  # Currently positive when in target region
         
         from utils.boundary_functions import InputSet
@@ -1066,10 +1068,11 @@ class Quad2DAttitudeReachAvoidOriginal(Dynamics):
         return disturbance_jacobian
 
     def reach_fn(self, state):
-        # Negated to be negative in target region
+        # Negated to be negative in target region - Safe is negative, Unsafe is positive
         return -self.sdf_reach(state)
     
     def avoid_fn(self, state):
+        # Safe is positive, Unsafe is negative
         return self.sdf_avoid(state)
 
     def boundary_fn(self, state):
