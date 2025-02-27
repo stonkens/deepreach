@@ -180,7 +180,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
                 fig.savefig(self.save_path)
             else:
                 fig.savefig(self.save_path + '/model_safe_set.png')
-        
+        plt.close(fig=fig)
         return {"safe_set": wandb.Image(fig)}
 
 
