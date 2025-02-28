@@ -68,7 +68,8 @@ class Quad2DAttitude(ControlandDisturbanceAffineDynamics):
 
 
 Quad2DAttitudeReachAvoid = Quad2DAttitude
-Quad2DAttitudeReachAvoidOriginal = Quad2DAttitude    
+Quad2DAttitudeReachAvoidOriginal = Quad2DAttitude
+Quad2DAttitude_ReachOnly = Quad2DAttitude    
 
 class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,

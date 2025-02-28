@@ -22,32 +22,62 @@ class Obstacle:
 
 
 class Circle(Obstacle):
-    def __init__(self, state_idis, radius, center, padding=0.0, slope_change=None, slope_factor=None, device='cpu') -> None:
+    def __init__(self, state_idis, radius, center, padding=0.0, slope_change=None, slope_factor=None, slope_change_type="linear", device='cpu') -> None:
+        """
+        Args: 
+            - ... 
+            - slope_change: str: None, 'inside', 'outside': changes slope inside or outside the obstacle
+            - slope_factor: float: None, float: divides the slope inside/outside obstacle, or string "ln" for log change 
+            - slope_change_type: str: 'linear', 'ln': changes slope linearly or with ln
+        """
         super().__init__(state_idis, padding, device=device)
         self.radius = torch.tensor(radius).to(device)
         self.center = torch.tensor(center).to(device)[torch.newaxis]
 
         self.slope_change = slope_change # None, 'inside', 'outside': changes slope inside or outside the obstacle
         self.slope_factor = slope_factor # None, float: divides the slope inside/outside obstacle
+        self.slope_change_type = slope_change_type # 'linear', 'ln': changes slope linearly or with ln
+        if self.slope_change is not None: 
+            assert(self.slope_change in ['inside', 'outside'])
+            assert(type(self.slope_factor) == int or type(self.slope_factor) == float )
+            assert(self.slope_change_type in ['linear', 'ln'])
 
     def obstacle_sdf(self, x):
+        # Negative Inside Circle, Positive Outside Circle
         self.to_device(x.device)
         obstacle_sdf = torch.norm(self.center - x[..., self.state_idis], dim=-1) - self.radius - self.padding
 
         # Modify SDF slope
+        # Ln slope reduction
         if self.slope_change is not None:
-            assert(self.slope_change in ['inside', 'outside'])
-            assert(self.slope_factor is not None)
-            if self.slope_change == 'inside': 
-                obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)] /= self.slope_factor
-            elif self.slope_change == 'outside':
-                obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)] /= self.slope_factor
+            # Ln slope reduction
+            if self.slope_change_type == 'ln':
+                if self.slope_change == 'inside': 
+                    # Inside Obstacle: sdf < 0: -ln(1-x)
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)] = - torch.log(1 - obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)])
+                elif self.slope_change == 'outside':
+                    # Outside Obstacle: sdf > 0: ln(1+x)
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)] = torch.log(1 + obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)])
+            
+            # Linear slope reduction
+            elif self.slope_change_type == 'linear': 
+                if self.slope_change == 'inside': 
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)] /= self.slope_factor
+                elif self.slope_change == 'outside':
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)] /= self.slope_factor
 
         return obstacle_sdf
 
 
 class Ellipse(Obstacle):
-    def __init__(self, state_idis, offset, center, scaling, padding=0.0, slope_change=None, slope_factor=None, device='cpu') -> None:
+    def __init__(self, state_idis, offset, center, scaling, padding=0.0, slope_change=None, slope_factor=None, slope_change_type="linear", device='cpu') -> None:
+        """
+        Args: 
+            - ... 
+            - slope_change: str: None, 'inside', 'outside': changes slope inside or outside the obstacle
+            - slope_factor: float: None, float: divides the slope inside/outside obstacle, or string "ln" for log change 
+            - slope_change_type: str: 'linear', 'ln': changes slope linearly or with ln
+        """
         super().__init__(state_idis, padding, device=device)
         self.offset = torch.tensor(offset).to(device)
         self.center = torch.tensor(center).to(device)[torch.newaxis]
@@ -55,23 +85,40 @@ class Ellipse(Obstacle):
 
         self.slope_change = slope_change # None, 'inside', 'outside': changes slope inside or outside the obstacle
         self.slope_factor = slope_factor # None, float: divides the slope inside/outside obstacle
+        self.slope_change_type = slope_change_type # 'linear', 'ln': changes slope linearly or with ln
+        if self.slope_change is not None: 
+            assert(self.slope_change in ['inside', 'outside'])
+            assert(type(self.slope_factor) == int or type(self.slope_factor) == float )
+            assert(self.slope_change_type in ['linear', 'ln'])
     
     def obstacle_sdf(self, x):
+        # Positive Inside Ellipse, Negative Outside Ellipse
+
         self.to_device(x.device)
         # offset - (x1 - center1)^2/s1^2 - (x2 - center2)^2/s2^2 - ... - (xn - centern)^2/sn^2
         obstacle_sdf = self.offset - torch.sum(self.scaling * (self.center - x[..., self.state_idis]) ** 2, dim=-1)
         
         # Modify SDF slope
         if self.slope_change is not None:
-            assert(self.slope_change in ['inside', 'outside'])
-            assert(self.slope_factor is not None)
-            distance_value = torch.sum(self.scaling * (self.center - x[..., self.state_idis]) ** 2, dim=-1)
-            if self.slope_change == 'inside': 
-                # Inside Obstacle: 
-                obstacle_sdf[torch.where(distance_value < self.offset)] /= self.slope_factor
-            elif self.slope_change == 'outside':
-                # Outside Obstacle: 
-                obstacle_sdf[torch.where(distance_value > self.offset)] /= self.slope_factor
+            # Ln slope reduction
+            if self.slope_change_type == 'ln':
+                distance_value = torch.sum(self.scaling * (self.center - x[..., self.state_idis]) ** 2, dim=-1)
+                if self.slope_change == 'inside': 
+                    # Inside Obstacle: sdf > 0: ln(1+x)
+                    obstacle_sdf[torch.where(distance_value < self.offset)] = torch.log(1 + obstacle_sdf[torch.where(distance_value < self.offset)])
+                elif self.slope_change == 'outside':
+                    # Outside Obstacle: sdf < 0: -ln(1-x)
+                    obstacle_sdf[torch.where(distance_value > self.offset)] = -torch.log(1 - obstacle_sdf[torch.where(distance_value > self.offset)])
+        
+            # Linear slope reduction
+            elif self.slope_change_type == 'linear':
+                distance_value = torch.sum(self.scaling * (self.center - x[..., self.state_idis]) ** 2, dim=-1)
+                if self.slope_change == 'inside': 
+                    # Inside Obstacle: sdf > 0
+                    obstacle_sdf[torch.where(distance_value < self.offset)] /= self.slope_factor
+                elif self.slope_change == 'outside':
+                    # Outside Obstacle: sdf < 0 
+                    obstacle_sdf[torch.where(distance_value > self.offset)] /= self.slope_factor
         
         return obstacle_sdf
     
@@ -80,15 +127,28 @@ class Ellipse(Obstacle):
 
 
 class Rectangle(Obstacle):
-    def __init__(self, state_idis, min_val, max_val, padding=0.0, slope_change=None, slope_factor=None, device='cpu') -> None:
+    def __init__(self, state_idis, min_val, max_val, padding=0.0, slope_change=None, slope_factor=None, slope_change_type="linear", device='cpu') -> None:
+        """
+        Args: 
+            - ... 
+            - slope_change: str: None, 'inside', 'outside': changes slope inside or outside the obstacle
+            - slope_factor: float: None, float: divides the slope inside/outside obstacle, or string "ln" for log change 
+            - slope_change_type: str: 'linear', 'ln': changes slope linearly or with ln
+        """
         super().__init__(state_idis, padding, device=device)
         self.min_val = torch.tensor(min_val).to(device)[torch.newaxis]
         self.max_val = torch.tensor(max_val).to(device)[torch.newaxis]
 
         self.slope_change = slope_change # None, 'inside', 'outside': changes slope inside or outside the obstacle
         self.slope_factor = slope_factor # None, float: divides the slope inside/outside obstacle
+        self.slope_change_type = slope_change_type # 'linear', 'ln': changes slope linearly or with ln
+        if self.slope_change is not None: 
+            assert(self.slope_change in ['inside', 'outside'])
+            assert(type(self.slope_factor) == int or type(self.slope_factor) == float )
+            assert(self.slope_change_type in ['linear', 'ln'])
 
     def obstacle_sdf(self, x):
+        # Negative Inside Rectangle, Positive Outside Rectangle
         self.to_device(x.device)
         max_dist_per_dim = torch.max(
             torch.stack([self.min_val - x[..., self.state_idis], x[..., self.state_idis] - self.max_val]), dim=0
@@ -104,14 +164,23 @@ class Rectangle(Obstacle):
 
         # Modify SDF slope
         if self.slope_change is not None:
-            assert(self.slope_change in ['inside', 'outside'])
-            assert(self.slope_factor is not None)
-            if self.slope_change == 'inside': 
-                # Inside Obstacle: unsafe and negative - standard conventions
-                inside_obstacle /= self.slope_factor
-            elif self.slope_change == 'outside':
-                # Outside Obstacle: safe and positive - standard conventions
-                outside_obstacle /= self.slope_factor
+            # Ln slope reduction
+            if self.slope_change_type == 'ln':
+                if self.slope_change == 'inside': 
+                    # Inside Obstacle: sdf < 0: -ln(1-x)
+                    inside_obstacle = -torch.log(1 - inside_obstacle)
+                elif self.slope_change == 'outside':
+                    # Outside Obstacle: sdf > 0: ln(1+x)
+                    outside_obstacle = torch.log(1 + outside_obstacle)
+            
+            # Linear slope reduction
+            elif self.slope_change_type == 'linear': 
+                if self.slope_change == 'inside': 
+                    # Inside Obstacle: unsafe and negative - standard conventions
+                    inside_obstacle /= self.slope_factor
+                elif self.slope_change == 'outside':
+                    # Outside Obstacle: safe and positive - standard conventions
+                    outside_obstacle /= self.slope_factor
 
         obstacle_sdf = (torch.where(torch.all(max_dist_per_dim < 0.0, dim=-1), inside_obstacle, outside_obstacle)
                         - self.padding)

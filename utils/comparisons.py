@@ -43,10 +43,16 @@ class GroundTruthHJSolution:
         self.set_mode = self.hj_dynamics.torch_dynamics.set_mode
         if self.loss_type == 'brt_hjivi':
             # Distinguish between reach and avoid
-            self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
-            brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
-            postprocessor = brt(self.avoid_values)
-            self.boundary_values = self.avoid_values
+            if self.set_mode == 'avoid': 
+                self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
+                brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
+                postprocessor = brt(self.avoid_values)
+                self.boundary_values = self.avoid_values
+            elif self.set_mode == 'reach': 
+                self.reach_values = -t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
+                brt = lambda target: (lambda t, x: jnp.maximum(x, target))
+                postprocessor = brt(self.reach_values)
+                self.boundary_values = self.reach_values
         elif self.loss_type == 'brat_ci_hjivi':
             self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)))
             self.reach_values = t2j(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)))
