@@ -128,6 +128,10 @@ class Ellipse(Obstacle):
         self.center = torch.tensor(center).to(device)[torch.newaxis]
         self.scaling = torch.tensor(scaling).to(device)[torch.newaxis]
 
+        self.slope_change = slope_change  # None, 'inside', 'outside': changes slope inside or outside the obstacle
+        self.slope_factor = slope_factor  # None, float: divides the slope inside/outside obstacle
+        self.slope_change_type = slope_change_type  # 'linear', 'ln': changes slope linearly or with ln
+
         self.flip = flip
         if self.slope_change is not None:
             assert self.slope_change in ["inside", "outside"]
@@ -199,7 +203,11 @@ class Rectangle(Obstacle):
         super().__init__(state_idis, padding, device=device)
         self.min_val = torch.tensor(min_val).to(device)[torch.newaxis]
         self.max_val = torch.tensor(max_val).to(device)[torch.newaxis]
-
+        
+        self.slope_change = slope_change  # None, 'inside', 'outside': changes slope inside or outside the obstacle
+        self.slope_factor = slope_factor  # None, float: divides the slope inside/outside obstacle
+        self.slope_change_type = slope_change_type  # 'linear', 'ln': changes slope linearly or with ln
+        
         self.flip = flip
         if self.slope_change is not None:
             assert self.slope_change in ["inside", "outside"]
