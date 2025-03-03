@@ -656,12 +656,25 @@ class Quad2DAttitude(Dynamics):
         self.max_thrust = max_thrust
         self.max_pos_dist = max_pos_dist
         self.max_vel_dist = max_vel_dist
+        
         from utils import boundary_functions
-        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
-                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
-        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
-        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
-        self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+        obstacle_config_num = 2 
+
+        if obstacle_config_num == 1: 
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+            rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+            self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+        elif obstacle_config_num == 2:
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+            rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.0]), torch.Tensor([0.0, 1.0]))
+            self.sdf = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+        else: 
+            raise NotImplementedError("Invalid obstacle configuration number")
+
         from utils.boundary_functions import InputSet
         # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
         # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
@@ -809,15 +822,34 @@ class Quad2DAttitudeReachAvoid(Dynamics):
         self.max_thrust = max_thrust
         self.max_pos_dist = max_pos_dist
         self.max_vel_dist = max_vel_dist
-        from utils import boundary_functions
-        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
-                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
-        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
-        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
-        self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
 
-        self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0])
-        self.sdf_reach = self.target_region.boundary_sdf
+        from utils import boundary_functions
+        obstacle_config_num = 2 
+
+        if obstacle_config_num == 1:
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+            rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+
+            self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0])
+            self.sdf_reach = self.target_region.boundary_sdf
+
+        elif obstacle_config_num == 2:
+            # Obstacle configuration 2: target region further from obstacles
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+            rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.0]), torch.Tensor([0.0, 1.0]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])  # Negative when in obstacle
+            
+            self.target_region = boundary_functions.Circle([0, 1], 0.5, torch.tensor([-3.0, 1.75]))
+            self.sdf_reach = lambda x: -1 * self.target_region.obstacle_sdf(x)  # -1 to make it positive inside the target region
+            print("Using obstacle configuration 2")
+        else: 
+            raise NotImplementedError("Invalid obstacle configuration number")
+
         
         from utils.boundary_functions import InputSet
         # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
@@ -981,18 +1013,36 @@ class Quad2DAttitudeReachAvoidOriginal(Dynamics):
         self.max_pos_dist = max_pos_dist
         self.max_vel_dist = max_vel_dist
         from utils import boundary_functions
-        space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
-                                                        torch.Tensor([4.0, 2.5, 1.9, 1.9]))
-        circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
-        rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
-        self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])  # Negative when in obstacle
-
-        self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0], 
-                                                        slope_change=None, slope_factor=None)
-                                                        # slope_change="outside", slope_factor=1)
-        print(f"Slope change factor is {self.target_region.slope_factor}")
-        self.sdf_reach = self.target_region.boundary_sdf  # Currently positive when in target region
         
+        obstacle_config_num = 2 
+        
+        if obstacle_config_num == 1: 
+            # Obstacle configuration 1 - 1st obstacle config 
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+            rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.5]), torch.Tensor([0.0, 1.5]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])  # Negative when in obstacle
+
+            self.target_region = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0], 
+                                                            # slope_change="outside", slope_factor=1, slope_change_type="ln")
+                                                            slope_change="outside", slope_factor=10)
+            print(f"Slope change factor is {self.target_region.slope_factor}")
+            self.sdf_reach = self.target_region.boundary_sdf  # Currently positive when in target region
+        elif obstacle_config_num == 2:
+            # Obstacle configuration 2: target region further from obstacles
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.Tensor([2.0, 1.5]))
+            rectangle = boundary_functions.Rectangle([0, 1], torch.Tensor([-2.0, 0.0]), torch.Tensor([0.0, 1.0]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])  # Negative when in obstacle
+            self.target_region = boundary_functions.Circle([0, 1], 0.5, torch.tensor([-3.0, 1.75]))
+            self.sdf_reach = lambda x: -1 * self.target_region.obstacle_sdf(x)  # -1 to make it positive inside the target region
+            print("Using obstacle configuration 2")
+        else: 
+            raise NotImplementedError("Invalid obstacle configuration number")
+
+
         from utils.boundary_functions import InputSet
         # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
         # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
@@ -2764,10 +2814,21 @@ class Quad2DAttitude_ReachOnly(Dynamics):
         self.slope_factor = slope_factor
         self.slope_change_type = slope_change_type
 
-        ellipse = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0], 
-                                             slope_change=self.slope_change, slope_factor=self.slope_factor, slope_change_type=self.slope_change_type)
-        self.ellipse_sdf = ellipse.boundary_sdf # Inside Ellipse: positive, Outside ellipse negative 
-        self.sdf = lambda x: - self.ellipse_sdf(x) # Inverted SDF: Inside Ellipse: negative, Outside ellipse positive
+        obstacle_config_num = 2 
+
+        if obstacle_config_num == 1:
+            ellipse = boundary_functions.Ellipse([0, 1, 2, 3], 1.0, [0.75, 1.0, 0.0, 0.0], [2.0, 1.0, 3.0, 3.0], 
+                                                slope_change=self.slope_change, slope_factor=self.slope_factor, slope_change_type=self.slope_change_type)
+            self.ellipse_sdf = ellipse.boundary_sdf # Inside Ellipse: positive, Outside ellipse negative 
+            self.sdf = lambda x: - self.ellipse_sdf(x) # Inverted SDF: Inside Ellipse: negative, Outside ellipse positive
+        elif obstacle_config_num == 2:
+            circle = boundary_functions.Circle([0, 1], 0.5, torch.tensor([-3.0, 1.75]))
+            self.circle_sdf = circle.obstacle_sdf
+            self.sdf = self.circle_sdf # Inside Circle: negative, Outside Circle positive
+        else: 
+            raise NotImplementedError("Invalid obstacle configuration number")
+        
+        
 
         print(f"\n\nSlope Change Type: {slope_change_type}")
         print("Slope Change: ", slope_change)
