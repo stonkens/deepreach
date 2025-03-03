@@ -54,18 +54,17 @@ class Circle(Obstacle):
             if self.slope_change_type == 'ln':
                 if self.slope_change == 'inside': 
                     # Inside Obstacle: sdf < 0: -ln(1-x)
-                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)] = - torch.log(1 - obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)])
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis], dim=-1) < self.radius)] = - torch.log(1 - obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis], dim=-1) < self.radius)])
                 elif self.slope_change == 'outside':
                     # Outside Obstacle: sdf > 0: ln(1+x)
-                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)] = torch.log(1 + obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)])
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis], dim=-1) > self.radius)] = torch.log(1 + obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis], dim=-1) > self.radius)])
             
             # Linear slope reduction
             elif self.slope_change_type == 'linear': 
                 if self.slope_change == 'inside': 
-                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) < self.radius)] /= self.slope_factor
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis], dim=-1) < self.radius)] /= self.slope_factor
                 elif self.slope_change == 'outside':
-                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis]) > self.radius)] /= self.slope_factor
-
+                    obstacle_sdf[torch.where(torch.norm(self.center - x[..., self.state_idis], dim=-1) > self.radius)] /= self.slope_factor
         return obstacle_sdf
 
 
