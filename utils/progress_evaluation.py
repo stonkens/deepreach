@@ -158,8 +158,14 @@ class VisualizeSafeSet2D(EvaluationMetric):
                 ys_plot = np.linspace(-1, 1, y_resolution)
                 if vis_type == "imshow":
                     # s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T <= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.))
-                    s = ax.imshow(1*(values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T >= 0), cmap='bwr', origin='lower', extent=(-1., 1., -1., 1.)) # change in conventions: positive is safe, safe = 1 
-                    # Go from xs to (-1, 1) and ys to (-1, 1)
+                    s = ax.imshow(
+                        1 * (values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T >= 0),
+                        cmap="bwr",
+                        origin="lower",
+                        extent=(-1.0, 1.0, -1.0, 1.0),
+                        vmin=0,
+                        vmax=1,
+                    )  # change in conventions: positive is safe, safe = 1
                     fig.colorbar(s, ax=ax)
                 elif vis_type == "contourf":
                     s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
