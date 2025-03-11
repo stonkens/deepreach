@@ -71,6 +71,39 @@ Quad2DAttitudeReachAvoid = Quad2DAttitude
 Quad2DAttitudeReachAvoidOriginal = Quad2DAttitude
 Quad2DAttitude_ReachOnly = Quad2DAttitude    
 
+class Quad2DAttitude_Consolidated(ControlandDisturbanceAffineDynamics):
+    def __init__(self, torch_dynamics, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, 
+                 max_pos_dist: float = 0.0, max_vel_dist: float = 0.0, tMin: float = 0.0, tMax: float = 1.0,
+                 boundary_cfg_num: int = 1, problem_type: str = "avoid", # these do not matter for the hjr dynamics - maybe remove ? 
+                 ):
+        self.gravity = gravity
+        control_space = sets.Box(jnp.array([-max_angle, min_thrust]), jnp.array([max_angle, max_thrust]))
+        disturbance_space = sets.Box(jnp.array([-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist]), 
+                                     jnp.array([max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist]))
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+    def open_loop_dynamics(self, state, time):
+        x, y, vx, vy = state
+        return jnp.array([vx, vy, 0., -self.gravity])
+    
+    def control_jacobian(self, state, time):
+        return jnp.array([
+            [0., 0.],
+            [0., 0.],
+            [self.gravity, 0.],
+            [0., 1.],
+        ])
+    
+    def disturbance_jacobian(self, state, time):
+        return jnp.array([
+            [1., 0., 0., 0.],
+            [0., 1., 0., 0.],
+            [0., 0., 1., 0.],
+            [0., 0., 0., 1.],
+        ])
+
+
+
 class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,
                  pursuer_omega_max:float, angle_alpha_factor:float, 

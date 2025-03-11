@@ -46,8 +46,10 @@ def init_brat_ci_hjivi_loss(dynamics, minWith, dirichlet_loss_divisor):
 
             diff_constraint_hom = dvdt - ham
             if minWith == 'target':
-                diff_constraint_hom = torch.max(
-                    diff_constraint_hom, value - avoid_value)
+                # diff_constraint_hom = torch.max(
+                #     diff_constraint_hom, value - avoid_value)
+                diff_constraint_hom = torch.min(
+                    diff_constraint_hom, value + avoid_value) # matching configurations to brat_hjivi_loss
         dirichlet = value[dirchelet_mask] - boundary_value[dirchelet_mask]
         if dynamics.deepreach_model == 'exact':
             if torch.all(dirchelet_mask):
