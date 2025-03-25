@@ -1,4 +1,8 @@
 # DeepReach: A Deep Learning Approach to High-Dimensional Reachability
+
+To run the code with wandb do the following:
+
+python run_experiment.py --mode train --experiment_class DeepReach --dynamics_class Dubins3D --experiment_name dubins3d_tutorial_run --minWith target --goalR 0.25 --velocity 0.6 --omega_max 1.1 --angle_alpha_factor 1.2 --set_mode avoid --use_wandb --wandb_entity saslab-l4dc25-uncertainties --wandb_name test --wandb_project deepreach_test
 ### [Project Page](http://people.eecs.berkeley.edu/~somil/index.html) | [Paper](https://arxiv.org/pdf/2011.02082.pdf)<br>
 
 Repository Maintainers<br>
