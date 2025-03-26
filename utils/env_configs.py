@@ -77,8 +77,8 @@ class Quad2DAttitude_envs():
         elif self.problem_type == "reach": 
             # Negative Outside Reach/Unsafe, Positive Inside Reach/Safe
             self.avoid_fn = None 
-            self.reach_fn = self.sdf_reach #lambda x: -1 * self.sdf_reach(x) 
-            self.boundary_fn = self.sdf_reach
+            self.reach_fn = lambda x: -1 * self.sdf_reach(x) #lambda x: -1 * self.sdf_reach(x) 
+            self.boundary_fn = lambda x: -1 * self.sdf_reach(x)
         elif self.problem_type == "reach_avoid" or self.problem_type == "reach_avoid_ci": 
             # Avoid: Negative Unsafe, Positive Safe
             self.avoid_fn = self.sdf_avoid
