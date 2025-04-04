@@ -102,7 +102,7 @@ class Quad2DAttitude_Consolidated(ControlandDisturbanceAffineDynamics):
             [0., 0., 0., 1.],
         ])
 
-
+Quad2DAttitude_Consolidated_parametric = Quad2DAttitude_Consolidated
 
 class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,
