@@ -50,7 +50,7 @@ class GroundTruthHJSolution:
                 postprocessor = brt(self.avoid_values)
                 self.boundary_values = self.avoid_values
             elif self.set_mode == 'reach': 
-                self.reach_values = jnp.array(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)).detach().cpu().numpy()) # NOTE: Deleted negative sign from old here
+                self.reach_values = -jnp.array(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)).detach().cpu().numpy()) # NOTE: Deleted negative sign from old here
                 brt = lambda target: (lambda t, x: jnp.maximum(x, target))
                 postprocessor = brt(self.reach_values)
                 self.boundary_values = self.reach_values
