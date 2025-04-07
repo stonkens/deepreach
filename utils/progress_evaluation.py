@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import jax.numpy as jnp 
 from torch2jax import t2j, j2t
 from utils.error_evaluators import SliceSampleGenerator, ValueThresholdValidator
 import math
@@ -466,7 +467,7 @@ class RolloutTrajectories(EvaluationMetric):
         sample_states = torch.zeros(self.batch_size, self.dynamics.state_dim)
 
         num_scenarios = 0
-        max_counter = self.batch_size * 50
+        max_counter = self.batch_size * 2 #50 - change to *5 for now
         counter = 0 
         while num_scenarios < self.batch_size:
             candidate_sample_times = (torch.ceil((torch.rand((num_samples)) * (times_hi - times_lo) + times_lo) / self.dt) * self.dt).to(self.device)
@@ -692,6 +693,7 @@ class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories):
         ax.contourf(xs, ys, sdf_values.reshape(x_resolution, y_resolution).T, alpha=0.5)
         rollout_trajectory_figure = wandb.Image(fig)
         log_dict.update({'rollout_trajectory': rollout_trajectory_figure})
+        plt.close(fig)
 
         fig2, ax = plt.subplots(1, 2)
         ax[0].plot(log_dict['values_over_trajs'].T)
@@ -700,6 +702,7 @@ class RolloutTrajectoriesWithVisuals(FixedRolloutTrajectories):
         ax[1].plot((log_dict['cost_over_trajs'] - log_dict['values_over_trajs']).T)
         cost_value_figure = wandb.Image(fig2)
         log_dict.update({'value_v_cost': cost_value_figure})
+        plt.close(fig2)
         return log_dict
 
 
@@ -714,9 +717,11 @@ class RolloutTrajectoriesHJR(RolloutTrajectories):
 
     def get_optimal_trajectory(self, curr_coords, model_eval_grad):
         if hasattr(self.dataset.dynamics, 'parametric_dims'): 
-            curr_coords = t2j(curr_coords[..., [0] + self.dataset.dynamics.coord_state_dims])
+            # curr_coords = t2j(curr_coords[..., [0] + self.dataset.dynamics.coord_state_dims])
+            curr_coords = jnp.array((curr_coords[..., [0] + self.dataset.dynamics.coord_state_dims]).detach().cpu().numpy()) # replace t2j
         else: 
-            curr_coords = t2j(curr_coords)
+            # curr_coords = t2j(curr_coords)
+            curr_coords = jnp.array(curr_coords.detach().cpu().numpy()) # replace t2j
             
         # Get gradient values
         grad_values = self.ground_truth.get_values_gradient(curr_coords[:, 1:], curr_coords[:, 0])
