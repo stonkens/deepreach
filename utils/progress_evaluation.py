@@ -600,7 +600,12 @@ class RolloutTrajectories(EvaluationMetric):
 
         ########### Step 4: Evaluate performance the trajectories ###########
         sample_values = values_over_trajs[:, 0]
-        batch_scenario_costs = self.dynamics.cost_fn(state_trajs)
+        batches = torch.split(state_trajs, 2500, dim=0)
+        batched_cost_list = []
+        for batch in batches:
+            batch_cost = self.dynamics.cost_fn(batch, detach=True)
+            batched_cost_list.append(batch_cost)
+        batch_scenario_costs = torch.cat(batched_cost_list, dim=0)
         batch_value_errors = batch_scenario_costs - sample_values
         batch_value_mse = torch.mean(batch_value_errors ** 2)
         false_safe_trajectories = torch.logical_and(batch_scenario_costs < 0, sample_values >= 0)

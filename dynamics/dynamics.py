@@ -413,6 +413,292 @@ class Air3D(ControlandDisturbanceAffineDynamics):
         }
 
 
+class Air3DParameterized(ControlandDisturbanceAffineDynamics):
+    def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
+                 pursuer_omega_max:float, angle_alpha_factor:float):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.dist_max = 1.0
+        self.angle_alpha_factor = angle_alpha_factor
+        self.pursuer_omega_max = pursuer_omega_max
+        self.max_disturbance = pursuer_omega_max
+        # self.parametric_dims = [3]
+        # self.parametric_names = ["pursuer_omega"]
+        # self.coord_parametric_dims = list(np.array(self.parametric_dims) + 1)
+        self.state_dims = [0, 1, 2, 3]
+        self.coord_state_dims = list(np.array(self.state_dims) + 1)
+
+        from utils.boundary_functions import InputSet
+        self.control_space = InputSet(lo=-torch.Tensor([self.evader_omega_max]), 
+                                      hi=torch.Tensor([self.evader_omega_max]))
+        self.disturbance_space = InputSet(lo=-torch.Tensor([self.dist_max]), 
+                                          hi=torch.Tensor([self.dist_max]))
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid',
+            state_dim=4, input_dim=5, control_dim=1, disturbance_dim=1,
+            state_mean=[7, 0, 0, self.max_disturbance/2], 
+            state_var=[13, 10, self.angle_alpha_factor*math.pi, self.max_disturbance/2],
+            periodic_dims=[2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact",
+        )
+
+    def dsdt(self, state, control, disturbance, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
+        dsdt[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
+        dsdt[..., 2] = state[..., 3] * disturbance[..., 0] - control[..., 0]  # FIXME: disturbance term
+        dsdt[..., 3] = 0
+        return dsdt
+
+    def state_test_range(self):
+        return [
+            [-6, 20],
+            [-10, 10],
+            [-math.pi, math.pi],
+            [0, self.max_disturbance],  # disturbance term
+        ]
+    
+    # def parameter_test_slices(self):
+        return [[]]
+    
+    def open_loop_dynamics(self, state, time):
+        open_loop_dynamics = torch.zeros_like(state)
+        open_loop_dynamics[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2])
+        open_loop_dynamics[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) 
+        open_loop_dynamics[..., 2] = 0
+        return open_loop_dynamics
+    
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        control_jacobian[..., 0, 0] = state[..., 1]
+        control_jacobian[..., 1, 0] = -state[..., 0]
+        control_jacobian[..., 2, 0] = -1.0
+        return control_jacobian
+
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        disturbance_jacobian[..., 0, 0] = 0
+        disturbance_jacobian[..., 1, 0] = 0
+        disturbance_jacobian[..., 2, 0] = state[..., 3]  # disturbance term
+        return disturbance_jacobian
+
+    def boundary_fn(self, state):
+        return torch.norm(state[..., :2], dim=-1) - self.collisionR
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, time, dvds):
+        opt_control = self.optimal_control(state, dvds).squeeze(0)
+        opt_disturbance = self.optimal_disturbance(state, dvds).squeeze(0)
+        flow = self.dsdt(state.squeeze(0), opt_control, opt_disturbance, time.squeeze(0))
+        return torch.sum(flow*dvds, dim=-1)
+    
+    def optimal_control(self, state, dvds):
+        det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
+        # return torch.where(det >= 0, self.evader_omega_max, -self.evader_omega_max)[..., None]
+        return (self.evader_omega_max * torch.sign(det))[..., None]
+    
+    def optimal_disturbance(self, state, dvds):
+        # return torch.where(dvds[..., 2] >= 0, -self.pursuer_omega_max, self.pursuer_omega_max)[..., None]
+        return (-self.dist_max * torch.sign(dvds[..., 2]))[..., None]
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['x', 'y', 'theta', 'pursuer_omega'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+    
+    
+    #runs/air3d_param/training/checkpoints/model_current.pth
+
+
+class Air3DParameterizedTimeVarying(ControlandDisturbanceAffineDynamics):
+    def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
+                 pursuer_omega_max:float, max_omega_rate: float, angle_alpha_factor:float):#, trained_base_model_path:str):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.dist_max = 1.0
+        self.angle_alpha_factor = angle_alpha_factor
+        self.pursuer_omega_max = pursuer_omega_max
+        self.max_disturbance = pursuer_omega_max
+        self.max_disturbance_rate = max_omega_rate
+        # self.trained_base_model_path = trained_base_model_path
+        # self.parametric_dims = [3]
+        # self.parametric_names = ["pursuer_omega"]
+        # self.coord_parametric_dims = list(np.array(self.parametric_dims) + 1)
+        self.state_dims = [0, 1, 2, 3]
+        self.coord_state_dims = list(np.array(self.state_dims) + 1)
+
+        from utils.boundary_functions import InputSet
+        self.control_space = InputSet(lo=-torch.Tensor([self.evader_omega_max]), 
+                                      hi=torch.Tensor([self.evader_omega_max]))
+        self.disturbance_space = InputSet(lo=-torch.Tensor([self.dist_max]), 
+                                          hi=torch.Tensor([self.dist_max]))
+        
+        super().__init__(
+            loss_type='brat_hjivi', set_mode='avoid',
+            state_dim=4, input_dim=5, control_dim=1, disturbance_dim=1,
+            state_mean=[7, 0, 0, self.max_disturbance_rate / 2], 
+            state_var=[13, 10, self.angle_alpha_factor*math.pi, self.max_disturbance_rate / 2],
+            periodic_dims=[2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact",
+        )
+        # Import other model
+        from utils.modules import SingleBVPNet
+        self.base_model = SingleBVPNet(in_features=self.input_dim, out_features=1, type='sine', mode='mlp', hidden_features=512, num_hidden_layers=3)
+        self.trained_base_model_path = 'runs/air3d_param_vanilla'  # FIXME: Hardcoded for now
+        import os
+        self.deepreach_base_model_path = os.path.join(self.trained_base_model_path, 'training/checkpoints/model_current.pth')
+        # Find file that starts with config
+        self.base_config_path = [f for f in os.listdir(self.trained_base_model_path) if f.startswith('config')][0]
+        self.base_config_path = os.path.join(self.trained_base_model_path, self.base_config_path)
+        # load config txt file
+        with open(self.base_config_path, 'r') as f:
+            content = f.read()
+            # txt to dict
+
+        # Replace '=' with ':' to make it valid YAML
+        yaml_content = '\n'.join(line.replace('=', ':', 1) for line in content.splitlines()) 
+        import yaml
+        self.base_config = yaml.safe_load(yaml_content)
+        raw_model = torch.load(self.deepreach_base_model_path, weights_only=False)
+        self.base_model.load_state_dict(raw_model)
+        self.base_model.eval()
+        self.base_model.to('cuda')  # FIXME: Req?
+        self.base_dynamics = Air3DParameterized(self.base_config['collisionR'], self.base_config['evader_speed'], self.base_config['pursuer_speed'], self.base_config['evader_omega_max'], self.base_config['pursuer_omega_max'], self.base_config['angle_alpha_factor'])
+        def model_boundary_eval(coords, detach=False):
+            coords_full = torch.zeros(coords.shape[0], coords.shape[1] + 1).to(coords.device)
+            coords_full[:, 0] = self.base_config['tMax']
+            coords_full[:, 1:] = coords
+            results = self.base_model({'coords': self.base_dynamics.coord_to_input(coords_full.to('cuda'))})
+            vals = self.base_dynamics.io_to_value(results['model_in'], results['model_out'].squeeze(dim=-1))
+            # if not detach:
+                # return vals.to(coords.device)
+            if True:
+                vals = vals.detach()
+                return vals.to(coords.device).detach()
+        
+        def sdf_reach_fn(coords, detach=False):
+            # Reach is at the worst case disturbance
+            coords_mod = coords.clone()
+            coords_mod[..., 3] = self.evader_omega_max  # FIXME: Hardcoded for now
+            return model_boundary_eval(coords_mod, detach=detach)
+        
+        def sdf_avoid_fn(coords, detach=False):
+            # Avoid is at the worst case disturbance
+            coords_mod = coords.clone()
+            coords_mod[..., 3] = 0.0
+            return model_boundary_eval(coords_mod, detach=detach)
+        
+        self.sdf_reach = sdf_reach_fn
+        self.sdf_avoid = sdf_avoid_fn
+
+    def dsdt(self, state, control, disturbance, time):
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2]) + control[..., 0]*state[..., 1]
+        dsdt[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) - control[..., 0]*state[..., 0]
+        dsdt[..., 2] = state[..., 3] * disturbance[..., 0] - control[..., 0]  # FIXME: disturbance term
+        dsdt[..., 3] = 0
+        return dsdt
+
+    def reach_fn(self, state, detach=False):
+        if state.ndim > 2:  # hj_reachability
+            # squeeze all dimensions except last
+            state_new = state.reshape(-1, state.shape[-1])
+            sdf = -self.sdf_reach(state_new, detach=detach)
+            return sdf.reshape(state.shape[:-1])
+        else:
+            return -self.sdf_reach(state, detach=detach)
+    
+    def avoid_fn(self, state, detach=False):
+        if state.ndim > 2:  # hj_reachability
+            # squeeze all dimensions except last
+            state_new = state.reshape(-1, state.shape[-1])
+            sdf = self.sdf_avoid(state_new, detach=detach)
+            return sdf.reshape(state.shape[:-1])
+        else:
+            return self.sdf_avoid(state, detach=detach)
+    
+    def boundary_fn(self, state, detach=False):
+        return torch.maximum(self.reach_fn(state, detach=detach), -self.avoid_fn(state, detach=detach))
+
+    def state_test_range(self):
+        return [
+            [-6, 20],
+            [-10, 10],
+            [-math.pi, math.pi],
+            [0, self.max_disturbance_rate],  # disturbance term
+        ]
+    
+    # # def parameter_test_slices(self):
+    #     return [[]]
+    
+    def open_loop_dynamics(self, state, time):
+        open_loop_dynamics = torch.zeros_like(state)
+        open_loop_dynamics[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2])
+        open_loop_dynamics[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) 
+        return open_loop_dynamics
+    
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        control_jacobian[..., 0, 0] = state[..., 1]
+        control_jacobian[..., 1, 0] = -state[..., 0]
+        control_jacobian[..., 2, 0] = -1.0
+        return control_jacobian
+
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        disturbance_jacobian[..., 2, 0] = torch.clamp(self.pursuer_omega_max - time * state[..., 3],  min=0.0)
+        return disturbance_jacobian
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj, detach=False):
+        return torch.min(self.boundary_fn(state_traj, detach=detach), dim=-1).values
+    
+    def hamiltonian(self, state, time, dvds):
+        opt_control = self.optimal_control(state, dvds).squeeze(0)
+        opt_disturbance = self.optimal_disturbance(state, dvds).squeeze(0)
+        flow = self.dsdt(state.squeeze(0), opt_control, opt_disturbance, time.squeeze(0))
+        return torch.sum(flow*dvds, dim=-1)
+    
+    def optimal_control(self, state, dvds):
+        det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
+        # return torch.where(det >= 0, self.evader_omega_max, -self.evader_omega_max)[..., None]
+        return (self.evader_omega_max * torch.sign(det))[..., None]
+    
+    def optimal_disturbance(self, state, dvds):
+        # return torch.where(dvds[..., 2] >= 0, -self.pursuer_omega_max, self.pursuer_omega_max)[..., None]
+        return (-self.dist_max * torch.sign(dvds[..., 2]))[..., None]
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['x', 'y', 'theta', 'pursuer_omega'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
+        }
+
+
 class Dubins3D(Dynamics):
     def __init__(self, goalR:float, velocity:float, omega_max:float, angle_alpha_factor:float, set_mode:str, freeze_model: bool):
         self.goalR = goalR

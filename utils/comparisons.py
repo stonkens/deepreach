@@ -26,18 +26,18 @@ class GroundTruthHJSolution:
         if self.is_parametric:
             state_mean = state_mean[self.non_parametric_state_dims]
             state_var = state_var[self.non_parametric_state_dims]
-            grid_resolution = tuple([51]) * len(self.non_parametric_state_dims)
+            self.grid_resolution = tuple([51]) * len(self.non_parametric_state_dims)
         else: 
-            grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
+            self.grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
         
         state_mean = jnp.array(state_mean) 
         state_var = jnp.array(state_var)
         
-        state_hi = state_mean + state_var
-        state_lo = state_mean - state_var
-        state_domain = hj.sets.Box(lo=state_lo, hi=state_hi)
+        self.state_hi = state_mean + state_var
+        self.state_lo = state_mean - state_var
+        self.state_domain = hj.sets.Box(lo=self.state_lo, hi=self.state_hi)
         
-        self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(state_domain, grid_resolution, periodic_dims=self.hj_dynamics.periodic_dims)
+        self.grid = hj.Grid.from_lattice_parameters_and_boundary_conditions(self.state_domain, self.grid_resolution, periodic_dims=self.hj_dynamics.periodic_dims)
         
         self.loss_type = self.hj_dynamics.torch_dynamics.loss_type
         self.set_mode = self.hj_dynamics.torch_dynamics.set_mode
@@ -65,9 +65,20 @@ class GroundTruthHJSolution:
             # By convention, we always "max" u and "min" d in hj_reachability, hence some flipping required
             # avoid_fn is defined such that avoid_fn >= 0 <=> in non-avoid region (also in HJR)
             # reach_fn is defined such that reach_fn <= 0 <=> in reach region (flipped in HJR)
-            self.avoid_values = jnp.array(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)).detach().cpu().numpy())
-            self.reach_values = -jnp.array(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)).detach().cpu().numpy()) 
-            self.boundary_values = -jnp.array(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)).detach().cpu().numpy()) 
+            # breakpoint()
+            import torch
+            torch_states = j2t(self.grid.states)
+            batches = torch.split(torch_states, 2, dim=0)
+            avoid_batch_list = []
+            reach_batch_list = []
+            boundary_batch_list = []
+            for batch in batches:
+                avoid_batch_list.append(self.hj_dynamics.torch_dynamics.avoid_fn(batch, detach=True))
+                reach_batch_list.append(self.hj_dynamics.torch_dynamics.reach_fn(batch, detach=True))
+                boundary_batch_list.append(self.hj_dynamics.torch_dynamics.boundary_fn(batch, detach=True))
+            self.avoid_values = jnp.array(torch.cat(avoid_batch_list, dim=0).detach().cpu().numpy())
+            self.reach_values = -jnp.array(torch.cat(reach_batch_list, dim=0).detach().cpu().numpy())
+            self.boundary_values = -jnp.array(torch.cat(boundary_batch_list, dim=0).detach().cpu().numpy())
             brat = lambda obstacle, target: (lambda t, x: jnp.minimum(jnp.maximum(x, target), obstacle))
             postprocessor = brat(self.avoid_values, self.reach_values)
 
