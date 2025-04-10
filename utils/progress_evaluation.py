@@ -603,7 +603,7 @@ class RolloutTrajectories(EvaluationMetric):
         batches = torch.split(state_trajs, 2500, dim=0)
         batched_cost_list = []
         for batch in batches:
-            batch_cost = self.dynamics.cost_fn(batch, detach=True)
+            batch_cost = self.dynamics.cost_fn(batch) #, detach=True)
             batched_cost_list.append(batch_cost)
         batch_scenario_costs = torch.cat(batched_cost_list, dim=0)
         batch_value_errors = batch_scenario_costs - sample_values

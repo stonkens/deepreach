@@ -1,7 +1,7 @@
 import hj_reachability as hj
 from hj_reachability import sets
 import jax.numpy as jnp
-
+import numpy as np 
 
 class ControlandDisturbanceAffineDynamics(hj.dynamics.ControlAndDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, tMin, tMax, control_space, disturbance_space):
@@ -103,6 +103,56 @@ class Quad2DAttitude_Consolidated(ControlandDisturbanceAffineDynamics):
         ])
 
 Quad2DAttitude_Consolidated_parametric = Quad2DAttitude_Consolidated
+
+class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
+    """
+    Time varying: 
+    - Changing the max pos disturbance and max vel disturbance, linearly, based on time 
+    """
+    def __init__(self, torch_dynamics, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, 
+                 max_pos_dist: float = 0.0, max_vel_dist: float = 0.0, 
+                 pos_dist_slope: float = 0.0, vel_dist_slope: float = 0.0,
+                 tMin: float = 0.0, tMax: float = 1.0,
+                 boundary_cfg_num: int = 1, problem_type: str = "avoid", # these do not matter for the hjr dynamics - maybe remove ? 
+                 ):
+        self.gravity = gravity
+        
+        self.max_pos_dist = max_pos_dist 
+        self.max_vel_dist = max_vel_dist 
+
+        self.pos_dist_slope = pos_dist_slope
+        self.vel_dist_slope = vel_dist_slope
+
+        control_space = sets.Box(jnp.array([-max_angle, min_thrust]), jnp.array([max_angle, max_thrust]))
+        # disturbance_space = sets.Box(jnp.array([-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist]), 
+        #                              jnp.array([max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist]))
+        disturbance_space = sets.Box(jnp.array([-1, -1, -1, -1]), 
+                                        jnp.array([1, 1, 1, 1]))
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+    def open_loop_dynamics(self, state, time):
+        x, y, vx, vy = state
+        return jnp.array([vx, vy, 0., -self.gravity])
+    
+    def control_jacobian(self, state, time):
+        return jnp.array([
+            [0., 0.],
+            [0., 0.],
+            [self.gravity, 0.],
+            [0., 1.],
+        ])
+    
+    def disturbance_jacobian(self, state, time):
+
+        dist_jacobian = jnp.array([
+            [jnp.minimum(jnp.abs(time) * self.pos_dist_slope, self.max_pos_dist), 0, 0, 0], 
+            [0, jnp.minimum(jnp.abs(time) * self.pos_dist_slope, self.max_pos_dist), 0, 0], 
+            [0, 0, jnp.minimum(jnp.abs(time) * self.vel_dist_slope, self.max_vel_dist), 0], 
+            [0, 0, 0, jnp.minimum(jnp.abs(time) * self.vel_dist_slope, self.max_vel_dist)]
+        ])
+
+        return dist_jacobian 
+    
 
 class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,
