@@ -9,8 +9,11 @@ class Quad2DAttitude_envs():
             - config_num: int: configuration number for the environment 
             - problem_type: str: problem type to generate sdfs ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
         """
-        from deepreach.utils import boundary_functions
-
+        try: 
+            from deepreach.utils import boundary_functions
+        except: 
+            from utils import boundary_functions
+            
         viable_obstacle_configs = [1, 2]
         viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
 

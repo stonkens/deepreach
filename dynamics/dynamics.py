@@ -2922,11 +2922,17 @@ class Quad2DAttitude_Consolidated(Dynamics):
         self.problem_type = problem_type 
 
         # Define Environment 
-        from deepreach.utils import env_configs 
+        try: 
+            from deepreach.utils import env_configs 
+            from deepreach.utils.boundary_functions import InputSet
+        except: 
+            from utils import env_configs
+            from utils.boundary_functions import InputSet
+        
         self.env_config = env_configs.Quad2DAttitude_envs(config_num=self.boundary_cfg_num, 
                                                           problem_type=self.problem_type)
 
-        from deepreach.utils.boundary_functions import InputSet
+        
         # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
         # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
         self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
@@ -3109,11 +3115,17 @@ class Quad2DAttitude_Consolidated_parametric(Dynamics):
         ######### Parametric changes #########
 
         # Define Environment 
-        from utils import env_configs 
+        try: 
+            from deepreach.utils import env_configs 
+            from deepreach.utils.boundary_functions import InputSet
+        except: 
+            from utils import env_configs 
+            from utils.boundary_functions import InputSet
+
         self.env_config = env_configs.Quad2DAttitude_envs(config_num=self.boundary_cfg_num, 
                                                           problem_type=self.problem_type)
 
-        from utils.boundary_functions import InputSet
+        
         self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
         self.disturbance_space = InputSet(lo=[-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist], 
                                      hi=[max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist])
