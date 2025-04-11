@@ -4,14 +4,14 @@ from torch2jax import t2j, j2t
 import numpy as np
 from hj_reachability.finite_differences import upwind_first
 
+import hj_reachability as hj
+import jax.numpy as jnp
 
 class GroundTruthHJSolution:
     """
     Ground truth solution using Dynamic Programming, only for 5 state dimensions or less.
     """
-    def __init__(self, hj_dynamics):
-        import hj_reachability as hj
-        import jax.numpy as jnp
+    def __init__(self, hj_dynamics, solve=True):
         self.hj_dynamics = hj_dynamics
         self.is_parametric = False 
         if hasattr(self.hj_dynamics.torch_dynamics, "parametric_dims"):
@@ -47,19 +47,19 @@ class GroundTruthHJSolution:
             if self.set_mode == 'avoid': 
                 self.avoid_values = jnp.array(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)).detach().cpu().numpy())
                 brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
-                postprocessor = brt(self.avoid_values)
+                self.postprocessor = brt(self.avoid_values)
                 self.boundary_values = self.avoid_values
             elif self.set_mode == 'reach': 
                 self.reach_values = -jnp.array(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)).detach().cpu().numpy()) # NOTE: Deleted negative sign from old here
                 brt = lambda target: (lambda t, x: jnp.maximum(x, target))
-                postprocessor = brt(self.reach_values)
+                self.postprocessor = brt(self.reach_values)
                 self.boundary_values = self.reach_values
         elif self.loss_type == 'brat_ci_hjivi':
             self.avoid_values = jnp.array(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)).detach().cpu().numpy())
             self.reach_values = jnp.array(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)).detach().cpu().numpy())
             self.boundary_values = jnp.array(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)).detach().cpu().numpy())
             brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
-            postprocessor = brt(self.avoid_values)
+            self.postprocessor = brt(self.avoid_values)
         elif self.loss_type == 'brat_hjivi':
             print("\n\nHERE IN BRAT BRAT BRAT \n\n")
             # By convention, we always "max" u and "min" d in hj_reachability, hence some flipping required
@@ -80,43 +80,18 @@ class GroundTruthHJSolution:
             self.reach_values = -jnp.array(torch.cat(reach_batch_list, dim=0).detach().cpu().numpy())
             self.boundary_values = -jnp.array(torch.cat(boundary_batch_list, dim=0).detach().cpu().numpy())
             brat = lambda obstacle, target: (lambda t, x: jnp.minimum(jnp.maximum(x, target), obstacle))
-            postprocessor = brat(self.avoid_values, self.reach_values)
+            self.postprocessor = brat(self.avoid_values, self.reach_values)
 
-        # # START: NOTE: OLD - Before 3/31/2025
-        # if self.loss_type == 'brt_hjivi':
-        #     # Distinguish between reach and avoid
-        #     if self.set_mode == 'avoid': 
-        #         self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
-        #         brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
-        #         postprocessor = brt(self.avoid_values)
-        #         self.boundary_values = self.avoid_values
-        #     elif self.set_mode == 'reach': 
-        #         self.reach_values = -t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
-        #         brt = lambda target: (lambda t, x: jnp.maximum(x, target))
-        #         postprocessor = brt(self.reach_values)
-        #         self.boundary_values = self.reach_values
-        # elif self.loss_type == 'brat_ci_hjivi':
-        #     self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)))
-        #     self.reach_values = t2j(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)))
-        #     self.boundary_values = t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
-        #     brt = lambda obstacle: (lambda t, x: jnp.minimum(x, obstacle))
-        #     postprocessor = brt(self.avoid_values)
-        # elif self.loss_type == 'brat_hjivi':
-        #     # By convention, we always "max" u and "min" d in hj_reachability, hence some flipping required
-        #     # avoid_fn is defined such that avoid_fn >= 0 <=> in non-avoid region (also in HJR)
-        #     # reach_fn is defined such that reach_fn <= 0 <=> in reach region (flipped in HJR)
-        #     self.avoid_values = t2j(self.hj_dynamics.torch_dynamics.avoid_fn(j2t(self.grid.states)))
-        #     self.reach_values = -t2j(self.hj_dynamics.torch_dynamics.reach_fn(j2t(self.grid.states)))
-        #     self.boundary_values = -t2j(self.hj_dynamics.torch_dynamics.boundary_fn(j2t(self.grid.states)))
-        #     brat = lambda obstacle, target: (lambda t, x: jnp.minimum(jnp.maximum(x, target), obstacle))
-        #     postprocessor = brat(self.avoid_values, self.reach_values)
-        # # END: NOTE: OLD - Before 3/31/2025
-
-        solver_settings = hj.SolverSettings.with_accuracy("very_high", 
-                                                          value_postprocessor=postprocessor)
         min_time = self.hj_dynamics.tMin
         max_time = -self.hj_dynamics.tMax
         self.times = jnp.linspace(min_time, max_time, 5)  # FIXME: Hardcoded (has to be same  as with QuantifyBinary)
+        
+        if solve: # Default True
+            self.solve_hjr()
+    
+    def solve_hjr(self, ): 
+        solver_settings = hj.SolverSettings.with_accuracy("very_high", 
+                                                        value_postprocessor=self.postprocessor)
         self.value_functions = hj.solve(solver_settings, self.hj_dynamics, self.grid, self.times, 
                                         self.boundary_values, progress_bar=True)
         # TODO: Maybe negative for brat_hjivi
