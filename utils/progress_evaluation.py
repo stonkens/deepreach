@@ -312,7 +312,7 @@ class QuantifyBinarySafety(EvaluationMetric):
                 for i in range(0, coords.shape[0], 62500):  # FIXME: Hardcoded batch size
                     vals.append(model_eval(coords[i:i+62500]))
                 vals = torch.cat(vals, dim=0)
-                values.append(vals[torch.newaxis])
+                values.append(vals.unsqueeze(0))
             values = torch.cat(values, dim=0)
             nbr_states = values.numel()
             positive_model_states = (values >= 0)
@@ -375,7 +375,7 @@ class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
                 for i in range(0, coords.shape[0], 62500):
                     vals.append(model_eval(coords[i:i+62500]))
                 vals = torch.cat(vals, dim=0)
-                values.append(vals[torch.newaxis])
+                values.append(vals.unsqueeze(0))
             values = torch.cat(values, dim=0)
 
             nbr_states = values.numel()
