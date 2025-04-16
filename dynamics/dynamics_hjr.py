@@ -144,11 +144,12 @@ class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamic
     
     def disturbance_jacobian(self, state, time):
 
+        # NOTE: Time is negative
         dist_jacobian = jnp.array([
-            [jnp.minimum(jnp.abs(time) * self.pos_dist_slope, self.max_pos_dist), 0, 0, 0], 
-            [0, jnp.minimum(jnp.abs(time) * self.pos_dist_slope, self.max_pos_dist), 0, 0], 
-            [0, 0, jnp.minimum(jnp.abs(time) * self.vel_dist_slope, self.max_vel_dist), 0], 
-            [0, 0, 0, jnp.minimum(jnp.abs(time) * self.vel_dist_slope, self.max_vel_dist)]
+            [self.max_pos_dist - jnp.minimum(jnp.abs(time) * self.pos_dist_slope, self.max_pos_dist), 0, 0, 0], 
+            [0, self.max_pos_dist - jnp.minimum(jnp.abs(time) * self.pos_dist_slope, self.max_pos_dist), 0, 0], 
+            [0, 0, self.max_vel_dist - jnp.minimum(jnp.abs(time) * self.vel_dist_slope, self.max_vel_dist), 0], 
+            [0, 0, 0, self.max_vel_dist - jnp.minimum(jnp.abs(time) * self.vel_dist_slope, self.max_vel_dist)]
         ])
 
         return dist_jacobian 

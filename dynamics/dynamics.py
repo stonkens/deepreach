@@ -3442,10 +3442,12 @@ class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamic
         # Have the disturbance applied be a function of time 
         if len(time.shape) > 1: 
             time = time.squeeze(-1) # squeeze last dimension if too big ? 
-        disturbance_jacobian[..., 0, 0] = torch.clamp(time * self.pos_dist_slope, min=-self.max_pos_dist, max=self.max_pos_dist)
-        disturbance_jacobian[..., 1, 1] = torch.clamp(time * self.pos_dist_slope , min=-self.max_pos_dist, max=self.max_pos_dist)
-        disturbance_jacobian[..., 2, 2] = torch.clamp(time * self.vel_dist_slope, min=-self.max_vel_dist, max=self.max_vel_dist) 
-        disturbance_jacobian[..., 3, 3] = torch.clamp(time * self.vel_dist_slope, min=-self.max_vel_dist, max=self.max_vel_dist) 
+
+        # NOTE: time is positive
+        disturbance_jacobian[..., 0, 0] = self.max_pos_dist - torch.clamp(time * self.pos_dist_slope, min=None, max=self.max_pos_dist)
+        disturbance_jacobian[..., 1, 1] = self.max_pos_dist - torch.clamp(time * self.pos_dist_slope , min=None, max=self.max_pos_dist)
+        disturbance_jacobian[..., 2, 2] = self.max_vel_dist - torch.clamp(time * self.vel_dist_slope, min=None, max=self.max_vel_dist) 
+        disturbance_jacobian[..., 3, 3] = self.max_vel_dist - torch.clamp(time * self.vel_dist_slope, min=None, max=self.max_vel_dist) 
 
         return disturbance_jacobian.to(torch.float32)
 
