@@ -14,7 +14,7 @@ class Quad2DAttitude_envs():
         except: 
             from utils import boundary_functions
             
-        viable_obstacle_configs = [1, 2]
+        viable_obstacle_configs = [1, 2, 3]
         viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
 
         self.config_num = config_num
@@ -51,7 +51,15 @@ class Quad2DAttitude_envs():
             # Reach Config 
             circle = boundary_functions.Circle([0, 1], 0.5, torch.tensor([-3.0, 1.75]))
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x) #circle.obstacle_sdf
-            
+        
+        elif self.config_num == 3:
+            # Obstacle Config: 3
+            # Avoid Config
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [])
+            circle = boundary_functions.Circle([0, 1, 2, 3], 0.5, torch.Tensor([0.0, 1.25, 0.0, 0.0]))
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x) #circle.obstacle_sdf
 
         self.configure_reach_avoid_fns()
         return 
