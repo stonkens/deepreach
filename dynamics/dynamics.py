@@ -3501,19 +3501,19 @@ class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamic
             # d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
             # d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
             # d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
-            d1 = torch.where(dvds[..., 0] > 0, -1, 1)
-            d2 = torch.where(dvds[..., 1] > 0, -1, 1)
-            d3 = torch.where(dvds[..., 2] > 0, -1, 1)
-            d4 = torch.where(dvds[..., 3] > 0, -1, 1)
+            d1 = torch.where(dvds[..., 0] > 0, -1.0, 1.0)
+            d2 = torch.where(dvds[..., 1] > 0, -1.0, 1.0)
+            d3 = torch.where(dvds[..., 2] > 0, -1.0, 1.0)
+            d4 = torch.where(dvds[..., 3] > 0, -1.0, 1.0)
         elif self.set_mode == "reach":
             # d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
             # d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
             # d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
             # d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
-            d1 = torch.where(dvds[..., 0] < 0, -1, 1)
-            d2 = torch.where(dvds[..., 1] < 0, -1, 1)
-            d3 = torch.where(dvds[..., 2] < 0, -1, 1)
-            d4 = torch.where(dvds[..., 3] < 0, -1, 1)
+            d1 = torch.where(dvds[..., 0] < 0, -1.0, 1.0)
+            d2 = torch.where(dvds[..., 1] < 0, -1.0, 1.0)
+            d3 = torch.where(dvds[..., 2] < 0, -1.0, 1.0)
+            d4 = torch.where(dvds[..., 3] < 0, -1.0, 1.0)
         else:
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
         return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1).to(torch.float32)
