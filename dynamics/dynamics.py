@@ -385,16 +385,7 @@ class Air3D(ControlandDisturbanceAffineDynamics):
         opt_disturbance = self.optimal_disturbance(state, dvds).squeeze(0)
         flow = self.dsdt(state.squeeze(0), opt_control, opt_disturbance, time.squeeze(0))
         return torch.sum(flow*dvds, dim=-1)
-        
-        # ham = self.evader_omega_max * torch.abs(dvds[..., 0] * state[..., 1] - 
-        #                                         dvds[..., 1] * state[..., 0] - 
-        #                                         dvds[..., 2])  # Control component
-        # ham = ham - self.pursuer_omega_max * torch.abs(dvds[..., 2])  # Disturbance component
-        # ham = ham + ((self.pursuer_speed * torch.cos(state[..., 2]) - self.evader_speed) * dvds[..., 0] + 
-        #              (self.pursuer_speed * torch.sin(state[..., 2]) * dvds[..., 1]))  # Constant component
-        return ham
 
-    
     def optimal_control(self, state, dvds):
         det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
         # return torch.where(det >= 0, self.evader_omega_max, -self.evader_omega_max)[..., None]
@@ -411,6 +402,171 @@ class Air3D(ControlandDisturbanceAffineDynamics):
             'x_axis_idx': 0,
             'y_axis_idx': 1,
             'z_axis_idx': 2,
+        }
+
+
+class Dogfight(ControlandDisturbanceAffineDynamics):
+    def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
+                 pursuer_omega_max:float, angle_alpha_factor:float, max_disturbance: float):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.pursuer_omega_max = pursuer_omega_max
+        self.angle_alpha_factor = angle_alpha_factor
+        self.max_disturbance = max_disturbance
+        from utils.boundary_functions import InputSet
+        self.control_space = InputSet(lo=-torch.Tensor([self.evader_omega_max]), 
+                                      hi=torch.Tensor([self.evader_omega_max]))
+        self.disturbance_space = InputSet(lo=-torch.Tensor([self.pursuer_omega_max, self.max_disturbance, self.max_disturbance]), 
+                                          hi=torch.Tensor([self.pursuer_omega_max, self.max_disturbance, self.max_disturbance]))
+        super().__init__(
+            loss_type='brt_hjivi', set_mode='avoid',
+            state_dim=3, input_dim=4, control_dim=1, disturbance_dim=3,
+            state_mean=[5, 0, math.pi], 
+            state_var=[15, 10, math.pi],
+            periodic_dims=[2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact",
+        )
+
+    def state_test_range(self):
+        return [
+            [-10, 20],  # FIXME: Temp to -10
+            [-10, 10],
+            [0., 2 * math.pi],
+        ]
+    
+    def open_loop_dynamics(self, state, time):
+        open_loop_dynamics = torch.zeros_like(state)
+        open_loop_dynamics[..., 0] = -self.evader_speed + self.pursuer_speed*torch.cos(state[..., 2])
+        open_loop_dynamics[..., 1] = self.pursuer_speed*torch.sin(state[..., 2]) 
+        open_loop_dynamics[..., 2] = 0
+        return open_loop_dynamics
+    
+    def control_jacobian(self, state, time):
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        control_jacobian[..., 0, 0] = state[..., 1]
+        control_jacobian[..., 1, 0] = -state[..., 0]
+        control_jacobian[..., 2, 0] = -1.0
+        return control_jacobian
+
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        disturbance_jacobian[..., 2, 0] = 1.0  # omega_pursuer
+        disturbance_jacobian[..., 0, 1] = 1.0  # d_x
+        disturbance_jacobian[..., 1, 2] = 1.0  # d_y
+        return disturbance_jacobian
+
+    def boundary_fn(self, state):
+        return torch.norm(state[..., :2], dim=-1) - self.collisionR
+
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, time, dvds):
+        opt_control = self.optimal_control(state, dvds).squeeze(0)
+        opt_disturbance = self.optimal_disturbance(state, dvds).squeeze(0)
+        flow = self.dsdt(state.squeeze(0), opt_control, opt_disturbance, time.squeeze(0))
+        return torch.sum(flow*dvds, dim=-1)
+
+    def optimal_control(self, state, dvds):
+        det = dvds[..., 0]*state[..., 1] - dvds[..., 1]*state[..., 0]-dvds[..., 2]
+        # return torch.where(det >= 0, self.evader_omega_max, -self.evader_omega_max)[..., None]
+        if self.set_mode == 'avoid':
+            return (self.evader_omega_max * torch.sign(det))[..., None]
+        else:
+            return (-self.evader_omega_max * torch.sign(det))[..., None]
+    
+    def optimal_disturbance(self, state, dvds):
+        # return torch.where(dvds[..., 2] >= 0, -self.pursuer_omega_max, self.pursuer_omega_max)[..., None]
+        if self.set_mode == "avoid":
+            d0 = -self.pursuer_omega_max * torch.sign(dvds[..., 2])[..., None]
+            d1 = -self.max_disturbance * torch.sign(dvds[..., 0])[..., None]
+            d2 = -self.max_disturbance * torch.sign(dvds[..., 1])[..., None]
+        else:
+            d0 = self.pursuer_omega_max * torch.sign(dvds[..., 2])[..., None]
+            d1 = self.max_disturbance * torch.sign(dvds[..., 0])[..., None]
+            d2 = self.max_disturbance * torch.sign(dvds[..., 1])[..., None]
+        return torch.cat((d0, d1, d2), dim=-1)
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0],
+            'state_labels': ['x', 'y', 'theta'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': 2,
+        }
+
+
+class DogfightParameterized(Dogfight):
+    def __init__(self, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float, 
+                 pursuer_omega_max:float, angle_alpha_factor:float, max_disturbance: float):
+        self.collisionR = collisionR
+        self.evader_speed = evader_speed
+        self.pursuer_speed = pursuer_speed
+        self.evader_omega_max = evader_omega_max
+        self.pursuer_omega_max = pursuer_omega_max
+        self.angle_alpha_factor = angle_alpha_factor
+        self.max_disturbance = max_disturbance
+        from utils.boundary_functions import InputSet
+        self.control_space = InputSet(lo=-torch.Tensor([self.evader_omega_max]), 
+                                      hi=torch.Tensor([self.evader_omega_max]))
+        self.disturbance_space = InputSet(lo=-torch.Tensor([self.pursuer_omega_max, 1.0, 1.0]), 
+                                          hi=torch.Tensor([self.pursuer_omega_max, 1.0, 1.0]))
+    
+        ControlandDisturbanceAffineDynamics.__init__(
+            self,
+            loss_type='brt_hjivi', set_mode='avoid',
+            state_dim=4, input_dim=5, control_dim=1, disturbance_dim=3,
+            state_mean=[5, 0, math.pi, self.max_disturbance / 2], 
+            state_var=[15, 10, math.pi, self.max_disturbance / 2],
+            periodic_dims=[2],
+            value_mean=0.25, 
+            value_var=0.5, 
+            value_normto=0.02,
+            deepreach_model="exact",
+        )
+
+    def state_test_range(self):
+        return [
+            [-10, 20],  # FIXME: Temp to -10
+            [-10, 10], 
+            [0, 2 * math.pi],
+            [0, self.max_disturbance],  # disturbance term
+        ]
+
+    def disturbance_jacobian(self, state, time):
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        disturbance_jacobian[..., 2, 0] = 1.0  # omega_pursuer
+        disturbance_jacobian[..., 0, 1] = state[..., 3]  # d_x
+        disturbance_jacobian[..., 1, 2] = state[..., 3]  # d_y
+        return disturbance_jacobian
+
+    def optimal_disturbance(self, state, dvds):
+        if self.set_mode == "avoid":
+            d0 = -self.pursuer_omega_max * torch.sign(dvds[..., 2])[..., None]
+            d1 = -1.0 * torch.sign(dvds[..., 0])[..., None]
+            d2 = -1.0 * torch.sign(dvds[..., 1])[..., None]
+        else:
+            d0 = self.pursuer_omega_max * torch.sign(dvds[..., 2])[..., None]
+            d1 = 1.0 * torch.sign(dvds[..., 0])[..., None]
+            d2 = 1.0 * torch.sign(dvds[..., 1])[..., None]
+        return torch.cat((d0, d1, d2), dim=-1)
+
+    def plot_config(self):
+        return {
+            'state_slices': [0, 0, 0, 0],
+            'state_labels': ['x', 'y', 'theta', 'dist'],
+            'x_axis_idx': 0,
+            'y_axis_idx': 1,
+            'z_axis_idx': [2, 3],
         }
 
 
