@@ -3117,8 +3117,8 @@ class Quad2DAttitude_Consolidated_parametric(Dynamics):
             loss_type = 'brat_hjivi_ci'
 
         ######### Parametric changes #########
-        state_mean = [0., 1.3, 0, 0 ] + [self.max_pos_dist/2, self.max_vel_dist/2] # mean of state and parametric dimensions
-        state_var = [5., 1.5, 2, 2] + [self.max_pos_dist/2 + 0.05, self.max_vel_dist/2 + 0.05] # variance of state and parametric dimensions - 0.05 offset for proper coverage of boundaries
+        state_mean = [0., 1.3, 0, 0 ] + [self.max_pos_dist/2*1.1, self.max_vel_dist/2*1.1] # mean of state and parametric dimensions
+        state_var = [5., 1.5, 2, 2] + [self.max_pos_dist/2*1.1, self.max_vel_dist/2*1.1] # variance of state and parametric dimensions - 0.05 offset for proper coverage of boundaries
         ######### Parametric changes #########
 
         super().__init__(
@@ -3156,8 +3156,8 @@ class Quad2DAttitude_Consolidated_parametric(Dynamics):
         Returns: the parametric slices to evaluate and plot with - in progress evaluation
         """
         return [[0., 0., ], 
-                [self.max_pos_dist/2, self.max_vel_dist/2], # NOTE: TODO: ADD BACK IN LATER
-                [self.max_pos_dist/2, self.max_vel_dist], 
+                [self.max_pos_dist/3, self.max_vel_dist/3], # NOTE: TODO: ADD BACK IN LATER
+                [self.max_pos_dist * 2/3, self.max_vel_dist * 2/3],
                 [self.max_pos_dist, self.max_vel_dist]]
     ######### Parametric changes #########
 
