@@ -2923,7 +2923,7 @@ class Quad2DAttitude_Consolidated(Dynamics):
         elif self.problem_type == "reach_avoid": 
             loss_type = 'brat_hjivi'
         elif self.problem_type == "reach_avoid_ci": 
-            loss_type = 'brat_hjivi_ci'
+            loss_type = 'brat_ci_hjivi'
         super().__init__(
             loss_type=loss_type, set_mode=set_mode,
             # loss_type='brt_hjivi', set_mode=set_mode,
@@ -3114,7 +3114,7 @@ class Quad2DAttitude_Consolidated_parametric(Dynamics):
         elif self.problem_type == "reach_avoid": 
             loss_type = 'brat_hjivi'
         elif self.problem_type == "reach_avoid_ci": 
-            loss_type = 'brat_hjivi_ci'
+            loss_type = 'brat_ci_hjivi'
 
         ######### Parametric changes #########
         state_mean = [0., 1.3, 0, 0 ] + [self.max_pos_dist/2*1.1, self.max_vel_dist/2*1.1] # mean of state and parametric dimensions
@@ -3355,7 +3355,7 @@ class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamic
         elif self.problem_type == "reach_avoid": 
             loss_type = 'brat_hjivi'
         elif self.problem_type == "reach_avoid_ci": 
-            loss_type = 'brat_hjivi_ci'
+            loss_type = 'brat_ci_hjivi'
         super().__init__(
             loss_type=loss_type, set_mode=set_mode,
             # loss_type='brt_hjivi', set_mode=set_mode,
@@ -3569,7 +3569,7 @@ class Quad2DAttitude_Consolidated_TimeVarying_parametric(ControlandDisturbanceAf
         elif self.problem_type == "reach_avoid": 
             loss_type = 'brat_hjivi'
         elif self.problem_type == "reach_avoid_ci": 
-            loss_type = 'brat_hjivi_ci'
+            loss_type = 'brat_ci_hjivi'
 
         ######### Parametric changes #########
         state_mean = [0., 1.3, 0, 0 ] + [self.pos_dist_slope/2, self.vel_dist_slope/2] # mean of state and parametric dimensions
@@ -3819,7 +3819,7 @@ class Quad2DAttitude_Consolidated_TimeVarying_parametric_Velocity(ControlandDist
         elif self.problem_type == "reach_avoid": 
             loss_type = 'brat_hjivi'
         elif self.problem_type == "reach_avoid_ci": 
-            loss_type = 'brat_hjivi_ci'
+            loss_type = 'brat_ci_hjivi'
 
         ######### Parametric changes #########
         state_mean = [0., 1.3, 0, 0 ] + [self.vel_dist_slope/2 * 1.05] # mean of state and parametric dimensions
@@ -4072,7 +4072,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         elif self.problem_type == "reach_avoid":
             loss_type = 'brat_hjivi'
         elif self.problem_type == "reach_avoid_ci":
-            loss_type = 'brat_hjivi_ci'
+            loss_type = 'brat_ci_hjivi'
 
         """ State: [
         0: x, 

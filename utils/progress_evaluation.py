@@ -138,7 +138,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
 
                 with torch.no_grad():
                     values = model_eval(coords)
-                    if ((not self.isHJR and (self.dataset.dynamics.loss_type == "brat_hjivi" or self.dataset.dynamics.loss_type == "brat_hjivi_ci")) or \
+                    if ((not self.isHJR and (self.dataset.dynamics.loss_type == "brat_hjivi" or self.dataset.dynamics.loss_type == "brat_ci_hjivi")) or \
                          (self.dataset.dynamics.loss_type == "brt_hjivi" and self.dataset.dynamics.set_mode == "reach")): 
                         values = - values # Flip to line up conventions: positive is safe - for reach avoid or only reach problems
                     sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(values.device))
