@@ -34,7 +34,7 @@ def parameter_list_to_suffix(parameter_list):
     
     parameter_suffix += "_"
     for param in parameter_list: 
-        parameter_suffix += str(param) + "p"
+        parameter_suffix += f"{param:.2f}p"
 
     return parameter_suffix
 

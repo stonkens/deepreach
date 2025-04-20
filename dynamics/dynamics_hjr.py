@@ -155,6 +155,8 @@ class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamic
         return dist_jacobian 
     
 Quad2DAttitude_Consolidated_TimeVarying_parametric = Quad2DAttitude_Consolidated_TimeVarying
+Quad2DAttitude_Consolidated_TimeVarying_parametric_Velocity = Quad2DAttitude_Consolidated_TimeVarying
+
 
 class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,
