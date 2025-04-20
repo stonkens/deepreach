@@ -68,7 +68,7 @@ class GroundTruthHJSolution:
             # breakpoint()
             import torch
             torch_states = j2t(self.grid.states)
-            batches = torch.split(torch_states, 2, dim=0)
+            batches = torch.split(torch_states, 51, dim=0)
             avoid_batch_list = []
             reach_batch_list = []
             boundary_batch_list = []

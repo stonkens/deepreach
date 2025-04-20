@@ -114,6 +114,8 @@ class Ellipse(Obstacle):
         slope_factor=None,
         slope_change_type="linear",
         flip=False,
+        max_val=None,
+        min_val=None,
         device="cpu",
     ) -> None:
         """
@@ -138,6 +140,10 @@ class Ellipse(Obstacle):
             assert self.slope_change_type in ["linear", "ln"]
             if self.slope_change_type == "linear":
                 assert isinstance(self.slope_factor, (int, float))
+        self.max_val = max_val
+        self.min_val = min_val
+        assert isinstance(self.max_val, (int, float)) or self.max_val is None
+        assert isinstance(self.min_val, (int, float)) or self.min_val is None
 
     def obstacle_sdf(self, x):
         # Positive Inside Ellipse, Negative Outside Ellipse
@@ -174,6 +180,11 @@ class Ellipse(Obstacle):
 
         if self.flip:
             obstacle_sdf = -obstacle_sdf
+        
+        if self.max_val is not None:
+            obstacle_sdf = torch.clamp(obstacle_sdf, max=self.max_val)
+        if self.min_val is not None:
+            obstacle_sdf = torch.clamp(obstacle_sdf, min=self.min_val)
         return obstacle_sdf
 
     def boundary_sdf(self, x):
