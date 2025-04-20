@@ -161,12 +161,14 @@ class Quad10d_envs():
             # Avoid Config 
             space_boundary = boundary_functions.Boundary(
                 state_idis=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-                min_val=[-4.0, -1.9, -(np.pi/2  - np.pi/8), -(np.pi/2  - np.pi/8), -4.0, -1.9, -(np.pi/2  - np.pi/8), -(np.pi/2  - np.pi/8), 0, -1.9], 
-                max_val=[4.0, 1.9, (np.pi/2  - np.pi/8), (np.pi/2  - np.pi/8), 4.0, 1.9, (np.pi/2  - np.pi/8), (np.pi/2  - np.pi/8), 4.0, 1.9]
+                min_val=[-4.0, -1.9, -(np.pi/4  - np.pi/16), -(np.pi  - np.pi/16), -1.9, -1.9, -(np.pi/4  - np.pi/16), -(np.pi  - np.pi/16), 0, -1.9], 
+                max_val=[4.0, 1.9, (np.pi/4  - np.pi/16), (np.pi  - np.pi/16), 1.9, 1.9, (np.pi/4  - np.pi/16), (np.pi  - np.pi/16), 2.5, 1.9]
+                # min_val=[-4.0, -1.9, -(np.pi/2  - np.pi/8), -(np.pi/2  - np.pi/8), -2.5, -1.9, -(np.pi/2  - np.pi/8), -(np.pi/2  - np.pi/8), 0, -1.9], 
+                # max_val=[4.0, 1.9, (np.pi/2  - np.pi/8), (np.pi/2  - np.pi/8), 2.5, 1.9, (np.pi/2  - np.pi/8), (np.pi/2  - np.pi/8), 2.5, 1.9]
                 )
             circle = boundary_functions.Circle(
                 state_idis=[0, 4, 8],
-                radius=0.5, 
+                radius=0.5,  
                 center=torch.Tensor([2.0, 0.0, 1.5])
             )
             rectangle = boundary_functions.Rectangle(
@@ -186,7 +188,7 @@ class Quad10d_envs():
         else: 
             raise ValueError("Invalid configuration number for the Quad10d environment.")
         
-        self.config_reach_avoid_fns()
+        self.configure_reach_avoid_fns()
         return 
 
     def configure_reach_avoid_fns(self, ): 

@@ -3941,35 +3941,40 @@ class Quad2DAttitude_Consolidated_TimeVarying_parametric(ControlandDisturbanceAf
 class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics): 
     
     # Dynamics reference: Equation 3: https://arxiv.org/pdf/2101.05916 
-    def __init__(self, gravity: float, max_pitch: float, max_yaw: float, 
+    def __init__(self, gravity: float, max_pitch: float, max_roll: float, 
                  min_thrust: float, max_thrust: float,
                  max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, 
                  # NOTE: no disturbance directly on position
                  # Constants: 
-                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 4.55, m: float = 1,
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
                  set_mode: str='avoid', 
                  boundary_cfg_num: int = 1, problem_type: str = "avoid"):
         """
         Args: 
             - max_pitch: Max desired pitch angle you can set
-            - max_yaw: Max desired yaw angle you can set
+            - max_roll: Max desired roll angle you can set: 
             - min_thrust: Min thrust you can set
             - max_thrust: Max thrust you can set
             - max_x_vel_dist: Max magnitude of disturbance on x velocity
             - max_y_vel_dist: Max magnitude of disturbance on y velocity
             - max_z_vel_dist: Max magnitude of disturbance on z velocity
+            - d0: float: constant
+            - d1: float: constant
+            - n0: float: constant
+            - k_T: float: thrust multiplier
+            - m: float: mass
             - set_mode: Set mode for the quadcopter: avoid or reach 
             - boundary_cfg_num: int: environment configuration to use 
             - problem_type: str: Type of problem to solve: see env_configs.py for details
         """
-        self.gravity = gravity 
-        self.max_pitch = max_pitch
-        self.max_yaw = max_yaw
-        self.min_thrust = min_thrust
-        self.max_thrust = max_thrust
-        self.max_x_vel_dist = max_x_vel_dist
-        self.max_y_vel_dist = max_y_vel_dist
-        self.max_z_vel_dist = max_z_vel_dist
+        self.gravity = gravity # Default: 9.8
+        self.max_pitch = max_pitch # Default: 0.2
+        self.max_roll = max_roll # Default: 0.2 
+        self.min_thrust = min_thrust # Default: 7
+        self.max_thrust = max_thrust # Default: 14
+        self.max_x_vel_dist = max_x_vel_dist # Default: 0.3 
+        self.max_y_vel_dist = max_y_vel_dist # Default: 0.3
+        self.max_z_vel_dist = max_z_vel_dist # Default: 0.3 
         
         self.boundary_cfg_num = boundary_cfg_num 
         self.problem_type = problem_type 
@@ -3979,7 +3984,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         self.d0 = d0
         self.n0 = n0
         self.k_T = k_T
-        self.m = m
+        self.mass = mass
 
         # Define Environment
         try: 
@@ -3989,11 +3994,11 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             from utils import env_configs
             from utils.boundary_functions import InputSet
 
-        self.env_config = env_configs.Quad10D_envs(config_num=self.boundary_cfg_num,
+        self.env_config = env_configs.Quad10d_envs(config_num=self.boundary_cfg_num,
                                                    problem_type=self.problem_type)
         
-        self.control_space = InputSet(lo=[-max_pitch, -max_yaw, min_thrust],
-                                      hi=[max_pitch, max_yaw, max_thrust])
+        self.control_space = InputSet(lo=[-max_pitch, -max_roll, min_thrust],
+                                      hi=[max_pitch, max_roll, max_thrust])
         self.disturbance_space = InputSet(lo=[-max_x_vel_dist, -max_y_vel_dist, -max_z_vel_dist,], 
                                           hi=[max_x_vel_dist, max_y_vel_dist, max_z_vel_dist])
         
@@ -4022,10 +4027,10 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         # TODO: NOTE: might want to change later! 
         state_mean = [0, 0, 0, 0, 
                       0, 0, 0, 0, 
-                      2.3, 0]
-        state_var = [5, 2, np.pi/2, np.pi/2, 
-                     5, 2, np.pi/2, np.pi/2, 
-                     2.5, 2]
+                      1.3, 0]
+        state_var = [5.0, 2.0, np.pi/4, np.pi, 
+                     2.5, 2.0, np.pi/4, np.pi, 
+                     1.5, 2.0]
         super().__init__(
             loss_type=loss_type, set_mode=set_mode, 
             state_dim=10, input_dim=11, control_dim=3, disturbance_dim=3, 
@@ -4036,20 +4041,20 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             value_mean=0.2, 
             value_var=0.5, 
             value_normto=0.02,
-            deepreach_mode="exact"
+            deepreach_model="exact"
         )
 
     def state_test_range(self): 
         return [
             [-5, 5],  # x
-            [-1.4, 1,4] , # v_x
-            [-np.pi/2, np.pi/2], # theta_x
-            [-np.pi/2, np.pi/2], # omega_x
-            [-5, 5], # y
+            [-1.4, 1.4] , # v_x
+            [-np.pi/4, np.pi/4], # theta_x
+            [-np.pi, np.pi], # omega_x
+            [-2, 2], # y
             [-1.4, 1.4] , # v_y
-            [-np.pi/2, np.pi/2], # theta_y
-            [-np.pi/2, np.pi/2], # omega_y
-            [-5, 5], # z
+            [-np.pi/4, np.pi/4], # theta_y
+            [-np.pi, np.pi], # omega_y
+            [-0.2, 2.8], # z
             [-1.4, 1.4] # v_z
         ]
     
@@ -4059,7 +4064,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
     # Constants  : d0, d1, n0, k_T, m
 
     # \dot x       = v_x 
-    # \dot v_x     = g * tan(theta_x) + d_x
+    # \dot v_x     = g * tan(theta_x) + d_x # NOTE: might want to try: g*theta_x + d_x instead
     # \dot theta_x = -d1 * theta_x + omega_x
     # \dot omega_x = -d0 * theta_x + n0 * S_x
     # \dot y       = v_y
@@ -4067,12 +4072,12 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
     # \dot theta_y = -d1 * theta_y + omega_y
     # \dot omega_y = -d0 * theta_y + n0 * S_y
     # \dot z       = v_z
-    # \dot v_z     = (k_T/m) T_z - g + d_z
+    # \dot v_z     = (k_T/m) T_z - g + d_z # NOTE: might want to try: T_z - g + d_z setting T_z: [6,13] instead or k_T = 0.9 
     
     def open_loop_dynamics(self, state, time): 
         dsdt = torch.zeros_like(state)
         dsdt[..., 0]  = state[..., 1]
-        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) 
+        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) # might try self.gravity * theta_x
         dsdt[..., 2]  = -self.d1 * state[..., 2] + state[..., 3]
         dsdt[..., 3]  = -self.d0 * state[..., 2] 
         dsdt[..., 4]  = state[..., 5]
@@ -4090,7 +4095,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         
         control_jacobian[...,  3, 0] = self.n0
         control_jacobian[..., 7, 1] = self.n0
-        control_jacobian[..., 9, 2] = self.k_T/self.m
+        control_jacobian[..., 9, 2] = self.k_T/self.mass
 
         return control_jacobian.to(torch.float32)
 
@@ -4111,7 +4116,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         return self.env_config.avoid_fn(state)
     
     def boundary_fn(self, state):
-        return super().boundary_fn(state)
+        return self.env_config.boundary_fn(state)
     
     def sample_target_state(self, num_samples):
         raise NotImplementedError
@@ -4120,8 +4125,8 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         return torch.min(self.boundary_fn(state_traj), dim=-1).values
     
     def hamiltonian(self, state, time, dvds): 
-        optimal_control = self.optimal_control(state=state, dvds=dvds)
-        optimal_disturbance = self.optimal_disturbance(state=state, dvds=dvds)
+        optimal_control = self.optimal_control(state=state, dvds=dvds).squeeze(0)
+        optimal_disturbance = self.optimal_disturbance(state=state, dvds=dvds).squeeze(0)
         flow = self.dsdt(state.squeeze(0), optimal_control, optimal_disturbance, time.squeeze(0))
         return torch.sum(flow*dvds, dim=-1)
 
@@ -4129,12 +4134,12 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         if self.set_mode == "avoid": 
             # Avoid: Maximize
             S_x = torch.where(dvds[..., 3] < 0, -self.max_pitch, self.max_pitch)
-            S_y = torch.where(dvds[..., 7] < 0, -self.max_yaw, self.max_yaw)
+            S_y = torch.where(dvds[..., 7] < 0, -self.max_roll, self.max_roll)
             T_z = torch.where(dvds[..., 9] < 0, self.min_thrust, self.max_thrust)
         elif self.set_mode == "reach": 
             # Reach: Minimize 
             S_x = torch.where(dvds[..., 3] > 0, -self.max_pitch, self.max_pitch)
-            S_y = torch.where(dvds[..., 7] > 0, -self.max_yaw, self.max_yaw)
+            S_y = torch.where(dvds[..., 7] > 0, -self.max_roll, self.max_roll)
             T_z = torch.where(dvds[..., 9] > 0, self.min_thrust, self.max_thrust)
         else: 
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
@@ -4157,9 +4162,6 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
 
     def plot_config(self):
 
-        state_slices = [0, 0, 0, 0] + list(np.zeros(len(self.parametric_dims)))
-        state_labels = ['y', 'z', r'$v_y$', r'$v_z$'] + self.parametric_names
-
         state_slices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         state_labels = ['x', 'v_x', r'$\theta_x$', r'$\omega_x$', 'y', 'v_y', r'$\theta_y$', r'$\omega_y$', 'z', 'v_z']
 
@@ -4168,7 +4170,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             'state_labels': state_labels,
             'x_axis_idx': 0, # actual x axis 
             'y_axis_idx': 9, # actual z axis
-            'z_axis_idx': [2, 3],
+            'z_axis_idx': [1, 9], # vx and vz 
         }
         
 

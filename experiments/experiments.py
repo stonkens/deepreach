@@ -54,7 +54,7 @@ class Experiment(ABC):
         self.use_wandb = use_wandb
         self.device = device
 
-        self.rollout_batch_size = 5000
+        self.rollout_batch_size = 20 #5000
         self.visual_rollout_batch_size = 20 
 
         # self.emperical_cost_validation_metric = EmpiricalPerformance(self.dataset.dynamics, 0.01, device=self.device)
@@ -112,6 +112,8 @@ class Experiment(ABC):
                 log_initial = {key + '_gt' + parametric_suffix: value for key, value in log_initial.items()}
                 log_initial['step'] = 0
 
+                # NOTE: COMMENTING OUT ROLLOUTS FOR TESTING
+                ############## START ROLLOUTS ##############
                 print("Starting GT rollouts")
 
                 # Rollout of ground truth (large batch size, so no plotting)
@@ -137,6 +139,7 @@ class Experiment(ABC):
                 for item, value in trajectory_viz_log.items():
                     if isinstance(value, wandb.Image):
                         log_initial[item + "_gt" + parametric_suffix] = value
+                ############## END ROLLOUTS ##############
                 
                 if self.use_wandb:
                     wandb.log(log_initial)
@@ -154,9 +157,16 @@ class Experiment(ABC):
                 self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
         
             else:
-                safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
-                self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
+                try: 
+                    safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
+                    self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
+                except: 
+                    print("Grid size occupying too much space: skipping QuantifyBinaryDifference Safety Metric")
 
+
+            # NOTE: COMMENTING OUT ROLLOUTS FOR TESTING
+            ############## START DEEPREACH ROLLOUTS ##############
+            print("Creating Deepreach Rollouts")
             standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.boundary_fn, v_min=0.0, v_max=2.0)
             validation_dict['fixed_samples_validator'] = standard_value_validator
             validation_dict['rollout_batch_size'] = self.rollout_batch_size
@@ -172,6 +182,7 @@ class Experiment(ABC):
 
             self.validation_metrics[parametric_key]["metrics"].append(traj_rollout)
             self.visual_only_validation_metrics[parametric_key]["metrics"].append(traj_rollout_viz)
+            ############## END DEEPREACH ROLLOUTS ##############
 
     @abstractmethod
     def init_special(self):
