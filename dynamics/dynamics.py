@@ -3854,7 +3854,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         super().__init__(
             loss_type=loss_type, set_mode=set_mode, 
             state_dim=10, input_dim=11, control_dim=3, disturbance_dim=3, 
-            periodic_dims=[2, 3, 6, 7],
+            periodic_dims=[], #[2, 6],
             state_mean=state_mean, 
             state_var=state_var, 
             # TODO: NOTE: might want to change later! 
@@ -3989,7 +3989,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             'state_slices': state_slices,
             'state_labels': state_labels,
             'x_axis_idx': 0, # actual x axis 
-            'y_axis_idx': 9, # actual z axis
+            'y_axis_idx': 8, # actual z axis
             'z_axis_idx': [1, 9], # vx and vz 
         }
         

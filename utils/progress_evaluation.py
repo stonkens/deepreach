@@ -57,7 +57,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
         self.parametric = parametric 
         self.isHJR = False 
 
-    def __call__(self, model_eval, model_eval_grad, vis_type='imshow'):
+    def __call__(self, model_eval, model_eval_grad, vis_type='contourf'):
         """
         Generate and visualize the safe set for the model using 2D plots. 
         self.dataset.dynamics.plot_config() is used to determine the axes to plot.
