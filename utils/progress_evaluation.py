@@ -168,9 +168,9 @@ class VisualizeSafeSet2D(EvaluationMetric):
                         vmin=0,
                         vmax=1,
                     )  # change in conventions: positive is safe, safe = 1
-                    fig.colorbar(s, ax=ax)
                 elif vis_type == "contourf":
                     s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
+                    ax.contour(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='orange', linewidths=5)
                     fig.colorbar(s, ax=ax)
                 
                 if self.dataset.dynamics.loss_type == 'brt_hjivi':
@@ -180,8 +180,9 @@ class VisualizeSafeSet2D(EvaluationMetric):
                     ax.contour(xs_plot, ys_plot, reach_values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='green')
                 ax.set_title(ax_title)
 
-            cax = fig.add_subplot(gs[i, -1])
-            fig.colorbar(s, cax=cax, orientation='vertical')
+            if vis_type == "imshow":
+                cax = fig.add_subplot(gs[i, -1])
+                fig.colorbar(s, cax=cax, orientation='vertical')
         fig.tight_layout()
         if self.save_path is not None:
             if self.save_path.endswith('.png'):
