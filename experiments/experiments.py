@@ -34,7 +34,7 @@ def parameter_list_to_suffix(parameter_list):
     
     parameter_suffix += "_"
     for param in parameter_list: 
-        parameter_suffix += str(param) + "p"
+        parameter_suffix += f"{param:.2f}p"
 
     return parameter_suffix
 
@@ -622,7 +622,7 @@ class Experiment(ABC):
                         if CSL_val_loss < CSL_loss_frac_cutoff*CSL_initial_val_loss:
                             break
 
-                if not (epoch+1) % epochs_til_checkpoint:
+                if (not (epoch+1) % epochs_til_checkpoint) or (epoch + 1) == 1:
                     # Saving the optimizer state is important to produce consistent results
                     checkpoint = { 
                         'epoch': epoch+1,

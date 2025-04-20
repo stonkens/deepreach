@@ -77,7 +77,7 @@ if (mode == 'all') or (mode == 'train'):
     p.add_argument('--deepreach_model', type=str, default='exact', required=False, choices=['exact', 'diff', 'vanilla'], help='deepreach model')
 
     # training options
-    p.add_argument('--epochs_til_ckpt', type=int, default=1000, help='Time interval in seconds until checkpoint is saved.')
+    p.add_argument('--epochs_til_ckpt', type=int, default=5000, help='Time interval in seconds until checkpoint is saved.')
     p.add_argument('--steps_til_summary', type=int, default=100, help='Time interval in seconds until tensorboard summary is saved.')
     p.add_argument('--batch_size', type=int, default=1, help='Batch size used during training (irrelevant, since len(dataset) == 1).')
     p.add_argument('--lr', type=float, default=2e-5, help='learning rate. default=2e-5')
@@ -130,11 +130,9 @@ experiment_dir = os.path.join(opt.experiments_dir, opt.experiment_name)
 if (mode == 'all') or (mode == 'train'):
     # create experiment dir
     if os.path.exists(experiment_dir):
-        overwrite = input("The experiment directory %s already exists. Overwrite? (y/n)"%experiment_dir)
-        if not (overwrite == 'y'):
-            print('Exiting.')
-            quit()
-        shutil.rmtree(experiment_dir)     
+        print("The experiment directory %s already exists"%experiment_dir)
+        print('Exiting.')
+        quit()
     os.makedirs(experiment_dir)
 elif mode == 'test':
     # confirm that experiment dir already exists

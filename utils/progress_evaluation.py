@@ -43,7 +43,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
     - Modify val_dict to change the resolution of the grid, the time slices, and the state slices.
     - Modify state_test_range and plot_config in the dynamics function to change the range and state slices.
     """
-    def __init__(self, dataset, val_dict, parametric=None):
+    def __init__(self, dataset, val_dict, parametric=None, vis_type='contourf'):
         """
         Args: 
             - dataset
@@ -56,6 +56,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
 
         self.parametric = parametric 
         self.isHJR = False 
+        self.vis_type = vis_type
 
     def __call__(self, model_eval, model_eval_grad, vis_type='contourf'):
         """
@@ -73,6 +74,8 @@ class VisualizeSafeSet2D(EvaluationMetric):
         3) In a for loop (over each individual subplot): Evaluate model at coords, plot the values, and plot boundary.
         """
         ########### Set up evaluation coords ###########
+        if vis_type is None:
+            vis_type = self.vis_type
         import matplotlib.pyplot as plt
         import matplotlib
         plot_config = self.dataset.dynamics.plot_config()
