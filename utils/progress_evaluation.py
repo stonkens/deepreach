@@ -58,7 +58,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
         self.isHJR = False 
         self.vis_type = vis_type
 
-    def __call__(self, model_eval, model_eval_grad, vis_type='contourf'):
+    def __call__(self, model_eval, model_eval_grad, vis_type='contourf', with_contour=True):
         """
         Generate and visualize the safe set for the model using 2D plots. 
         self.dataset.dynamics.plot_config() is used to determine the axes to plot.
@@ -138,8 +138,7 @@ class VisualizeSafeSet2D(EvaluationMetric):
 
                 with torch.no_grad():
                     values = model_eval(coords)
-                    if ((not self.isHJR and (self.dataset.dynamics.loss_type == "brat_hjivi" or self.dataset.dynamics.loss_type == "brat_hjivi_ci")) or \
-                         (self.dataset.dynamics.loss_type == "brt_hjivi" and self.dataset.dynamics.set_mode == "reach")): 
+                    if (not self.isHJR) and (not self.dataset.dynamics.set_mode == "avoid"): 
                         values = - values # Flip to line up conventions: positive is safe - for reach avoid or only reach problems
                     sdf_values = self.dataset.dynamics.boundary_fn(coords[:, 1:].to(values.device))
                     if self.dataset.dynamics.loss_type == 'brat_hjivi':
@@ -173,7 +172,8 @@ class VisualizeSafeSet2D(EvaluationMetric):
                     )  # change in conventions: positive is safe, safe = 1
                 elif vis_type == "contourf":
                     s = ax.contourf(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T)
-                    ax.contour(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='orange', linewidths=5)
+                    if with_contour:
+                        ax.contour(xs_plot, ys_plot, values.detach().cpu().numpy().reshape(x_resolution, y_resolution).T, levels=[0], colors='orange', linewidths=5)
                     fig.colorbar(s, ax=ax)
                 
                 if self.dataset.dynamics.loss_type == 'brt_hjivi':
@@ -252,11 +252,13 @@ class VisualizeValueDifference2D(VisualizeSafeSet2D):
                 gt_coords = x[:, [0] + self.dataset.dynamics.coord_state_dims] # include time at 0 and shifted state dims 
             else: 
                 gt_coords = x
-
+            values = model_eval(x)
+            if (not self.dataset.dynamics.set_mode == "avoid"):
+                values = -values
             # Flip model_eval sign to line up conventions: positive is safe - typical deepreach is the opposite
-            return (-1 * model_eval(x)) - self.ground_truth.value_from_coords(gt_coords)
+            return values - self.ground_truth.value_from_coords(gt_coords)
 
-        log_dict = super().__call__(new_eval, model_eval_grad, vis_type='contourf')
+        log_dict = super().__call__(new_eval, model_eval_grad, vis_type='contourf', with_contour=False)
         new_dict = {}
         for key, value in log_dict.items():
             new_dict[key + "_diff"] = value
@@ -298,6 +300,7 @@ class QuantifyBinarySafety(EvaluationMetric):
         for periodic_dim in self.dataset.dynamics.periodic_dims:  # TEMP FIX
             self.eval_states[:, periodic_dim] = self.eval_states[:, periodic_dim] / self.dataset.dynamics.angle_alpha_factor
         self.add_temporal_data = val_dict.get('add_temporal_data', True)
+        self.isHJR = False
 
     def __call__(self, model_eval, model_eval_grad):
         """
@@ -318,6 +321,8 @@ class QuantifyBinarySafety(EvaluationMetric):
                 vals = torch.cat(vals, dim=0)
                 values.append(vals.unsqueeze(0))
             values = torch.cat(values, dim=0)
+            if ((not self.isHJR) and (not self.dataset.dynamics.set_mode == "avoid")): 
+                values = -values
             nbr_states = values.numel()
             positive_model_states = (values >= 0)
             share_positive_states = torch.sum(positive_model_states) / nbr_states
@@ -328,6 +333,15 @@ class QuantifyBinarySafety(EvaluationMetric):
                     share_positive_states = torch.sum(positive_model_states[i]) / nbr_states
                     log_dict.update({f'share_positive_states_t={ts}': share_positive_states.item()})
         return log_dict
+
+
+class QuantifyBinarySafetyHJR(QuantifyBinarySafety):
+    """
+    Implementation for HJR
+    """
+    def __init__(self, dataset, val_dict, parametric=None): 
+        super().__init__(dataset, val_dict, parametric=parametric)
+        self.isHJR = True
 
 
 class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
@@ -381,7 +395,8 @@ class QuantifyBinarySafetyDifference(QuantifyBinarySafety):
                 vals = torch.cat(vals, dim=0)
                 values.append(vals.unsqueeze(0))
             values = torch.cat(values, dim=0)
-
+            if not self.dataset.dynamics.set_mode == "avoid":
+                values = -values
             nbr_states = values.numel()
             positive_model_states = (values >= 0)
             gt_values = self.gt_values.to(values.device)

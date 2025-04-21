@@ -19,7 +19,7 @@ class Quad2DAttitude_envs():
         except: 
             from utils import boundary_functions
             
-        viable_obstacle_configs = [1, 2, 3, 4, 5, 6]
+        viable_obstacle_configs = [1, 2, 3, 4, 5, 6, 7, 8, 9]
         viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
 
         self.config_num = config_num
@@ -100,6 +100,41 @@ class Quad2DAttitude_envs():
             # Reach Config
             ellipse = boundary_functions.Ellipse([0, 1, 2, 3], 0.75, [0.0, 2.1, 0.0, 0.0], [0.2, 5.0, 3.0, 3.0])
             self.sdf_reach = ellipse.boundary_sdf #lambda x: -1 * ellipse.boundary_sdf(x)
+        elif self.config_num == 7:
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            # rectangle1 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.5, 0.0]), torch.Tensor([-2.9, 1.5]))
+            rectangle2 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.1, 0.0]), torch.Tensor([-1.3, 1.5]))
+            rectangle3 = boundary_functions.Rectangle([0, 1], torch.Tensor([0.0, 0.0]), torch.Tensor([1.2, 1.0]))
+            rectangle4 = boundary_functions.Rectangle([0, 1], torch.Tensor([2.0, 0.0]), torch.Tensor([3.2, 2.0]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [rectangle2, rectangle3, rectangle4])
+            # Reach Config
+            ellipse = boundary_functions.Ellipse([0, 1, 2, 3], 0.75, [0.0, 2.1, 0.0, 0.0], [0.2, 5.0, 3.0, 3.0],
+                                                 min_val=-2.0)
+            self.sdf_reach = ellipse.boundary_sdf #lambda x: -1 * ellipse.boundary_sdf(x)
+        elif self.config_num == 8:
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            # rectangle1 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.5, 0.0]), torch.Tensor([-2.9, 1.5]))
+            rectangle2 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.1, 0.0]), torch.Tensor([-1.3, 1.5]))
+            rectangle3 = boundary_functions.Rectangle([0, 1], torch.Tensor([0.0, 0.0]), torch.Tensor([1.2, 1.0]))
+            rectangle4 = boundary_functions.Rectangle([0, 1], torch.Tensor([2.0, 0.0]), torch.Tensor([3.2, 2.0]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [rectangle2, rectangle3, rectangle4])
+            # Reach Config
+            circle = boundary_functions.Circle([0, 1, 2, 3], 0.6, torch.Tensor([0.0, 1.75, 0.0, 0.0]))
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)   
+                    
+        elif self.config_num == 9:
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3], torch.Tensor([-4.0, 0.0, -1.9, -1.9]),
+                                                            torch.Tensor([4.0, 2.5, 1.9, 1.9]))
+            # rectangle1 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.5, 0.0]), torch.Tensor([-2.9, 1.5]))
+            rectangle2 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.1, 0.0]), torch.Tensor([-1.3, 1.5]))
+            rectangle3 = boundary_functions.Rectangle([0, 1], torch.Tensor([0.0, 0.0]), torch.Tensor([1.2, 1.0]))
+            rectangle4 = boundary_functions.Rectangle([0, 1], torch.Tensor([2.0, 0.0]), torch.Tensor([3.2, 2.0]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [rectangle2, rectangle3, rectangle4])
+            # Reach Config
+            ellipse = boundary_functions.TanhEllipse([0, 1, 2, 3], 0.75, [-0.5, 2.0, 0.0, 0.0], [0.2, 5.0, 3.0, 3.0])
+            self.sdf_reach = ellipse.obstacle_sdf  #lambda x: -1 * circle.obstacle_sdf(x)               
         self.configure_reach_avoid_fns()
         return 
 
