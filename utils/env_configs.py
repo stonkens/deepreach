@@ -212,6 +212,9 @@ class Quad10d_envs():
         # SDF Avoid: Negative = Unsafe, Positive = Safe
         # SDF Reach: Negative = Outside Reach/Unsafe, Positive = Inside Reach/Safe
 
+        state_slices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        state_labels = ['x', 'v_x', r'$\theta_x$', r'$\omega_x$', 'y', 'v_y', r'$\theta_y$', r'$\omega_y$', 'z', 'v_z']
+
         # State: [0,  1 ,   2    ,    3   , 4,  5 ,   6    ,    7   , 8,  9]
         # State: [x, v_x, theta_x, omega_x, y, v_y, theta_y, omega_y, z, v_z]
         if self.config_num == 1:
@@ -248,39 +251,16 @@ class Quad10d_envs():
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
             # NOTE: Combine with the above class and just have different init functions for the different dynamics classes or something
 
-        ############################################################################
-        elif self.config_num == 2:
-            # TODO: NOTE: REMOVE THIS CONFIG TEST CONFIG - FOR TOY ENVIRONMENT VIZ TESTING
-            # Obstacle Config: 1
-            # Avoid Config 
-            space_boundary = boundary_functions.Boundary(
-                state_idis=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-                min_val=[-4.0, -1.9, -(np.pi/4  - np.pi/16), -(np.pi  - np.pi/16), -1.9, -1.9, -(np.pi/4  - np.pi/16), -(np.pi  - np.pi/16), 0, -1.9], 
-                max_val=[4.0, 1.9, (np.pi/4  - np.pi/16), (np.pi  - np.pi/16), 1.9, 1.9, (np.pi/4  - np.pi/16), (np.pi  - np.pi/16), 2.5, 1.9]
-                # min_val=[-4.0, -1.9, -(np.pi/2  - np.pi/8), -(np.pi/2  - np.pi/8), -2.5, -1.9, -(np.pi/2  - np.pi/8), -(np.pi/2  - np.pi/8), 0, -1.9], 
-                # max_val=[4.0, 1.9, (np.pi/2  - np.pi/8), (np.pi/2  - np.pi/8), 2.5, 1.9, (np.pi/2  - np.pi/8), (np.pi/2  - np.pi/8), 2.5, 1.9]
-                )
-            circle = boundary_functions.Circle(
-                state_idis=[0, 4, 8],
-                radius=0.5,  
-                center=torch.Tensor([2.5, 0.0, 1.5])
-            )
-            rectangle = boundary_functions.Rectangle(
-                state_idis=[0, 4, 8], 
-                min_val=torch.Tensor([-1.5, -1.5, 0.0]), 
-                max_val=torch.Tensor([0.5, 0.5, 1.0])
-            )
-            space_boundary.boundary_sdf = lambda x: torch.tensor([0.0])
-            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
-            # Reach Config
-            circle = boundary_functions.Circle(
-                state_idis=[0, 4, 8], 
-                radius=0.5, 
-                center=torch.Tensor([-3.0, 0.0, 1.75])
-            )
-            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
-            # NOTE: Combine with the above class and just have different init functions for the different dynamics classes or something
-        ############################################################################
+            # Define Plot config: 
+            state_slices[4] = -0.1 # adjust y
+            self.plot_config = {
+                'state_slices': state_slices, 
+                'state_labels': state_labels, 
+                'x_axis_idx': 0, # x-axis index
+                'y_axis_idx': 8, # z-axis index
+                'z_axis_idx': [1, 9], # vx, vz
+            }
+
         elif self.config_num == 3:
             # Obstacle Config: 3
             # Avoid Config 
@@ -313,7 +293,16 @@ class Quad10d_envs():
                 center=torch.Tensor([-3.0, 0.0, 1.75])
             )
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
-            # NOTE: Combine with the above class and just have different init functions for the different dynamics classes or something
+            
+            # Define Plot config: 
+            self.plot_config = {
+                'state_slices': state_slices, 
+                'state_labels': state_labels, 
+                'x_axis_idx': 0, # x-axis index
+                'y_axis_idx': 8, # z-axis index
+                'z_axis_idx': [1, 9], # vx, vz
+            }
+
         elif self.config_num == 4: 
             # Cylindrical obstacle 
             self.sdf_avoid = lambda state: torch.norm(state[..., [0,4]], dim=-1) - 0.5 
@@ -328,6 +317,16 @@ class Quad10d_envs():
                 center=torch.Tensor([-3.0, 0.0, 1.75])
             )
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
+
+            # Define Plot config: 
+            self.plot_config = {
+                'state_slices': state_slices,
+                'state_labels': state_labels,
+                'x_axis_idx': 0, # x axis 
+                'y_axis_idx': 4, # y axis
+                'z_axis_idx': [1, 5], # vx and vy
+            }
+
         else: 
             raise ValueError("Invalid configuration number for the Quad10d environment.")
         

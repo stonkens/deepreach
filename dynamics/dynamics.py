@@ -4120,6 +4120,16 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         state_var = [5.0, 2.0, np.pi/4, np.pi, 
                      2.5, 2.0, np.pi/4, np.pi, 
                      1.5, 2.0]
+
+        # Value mean and var 
+        # OLD: value mean and var that we used 
+        # value_mean = 0.2
+        # value_var = 0.5
+
+        # # New! Will's value mean and var 
+        value_mean=(math.sqrt(4.0**2 + 4.0**2) - 0.5) / 2
+        value_var=math.sqrt(4.0**2 + 4.0**2)
+
         super().__init__(
             loss_type=loss_type, set_mode=set_mode, 
             state_dim=10, input_dim=11, control_dim=3, disturbance_dim=3, 
@@ -4127,8 +4137,8 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             state_mean=state_mean, 
             state_var=state_var, 
             # TODO: NOTE: might want to change later! 
-            value_mean=0.2, 
-            value_var=0.5, 
+            value_mean=value_mean, 
+            value_var=value_var, 
             value_normto=0.02,
             deepreach_model="exact"
         )
@@ -4250,19 +4260,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         return torch.cat((d_x[..., None], d_y[..., None], d_z[..., None]), dim=-1)
 
     def plot_config(self):
-
-        state_slices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        state_labels = ['x', 'v_x', r'$\theta_x$', r'$\omega_x$', 'y', 'v_y', r'$\theta_y$', r'$\omega_y$', 'z', 'v_z']
-
-        return {
-            'state_slices': state_slices,
-            'state_labels': state_labels,
-            'x_axis_idx': 0, # actual x axis 
-            'y_axis_idx': 8, # actual z axis
-            'z_axis_idx': [1, 9], # vx and vz 
-        }
-        
-
+        return self.env_config.plot_config
 
 
 if __name__ == "__main__":
