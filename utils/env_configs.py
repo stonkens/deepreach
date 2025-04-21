@@ -164,7 +164,7 @@ class Quad10d_envs():
             - config_num: int: configuration number for the environment 
             - problem_type: str: problem type to generate sdfs ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
         """
-        viable_obstacle_configs = [1,2,3]
+        viable_obstacle_configs = [1,2,3,4]
         viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
 
         self.config_num = config_num 
@@ -200,6 +200,10 @@ class Quad10d_envs():
                 max_val=torch.Tensor([0.0, 0.0, 1.0])
             )
             self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = lambda x: torch.min([obstacle_sdf(x) for obstacle_sdf in [circle.obstacle_sdf, rectangle.obstacle_sdf]])
+            
             # Reach Config
             circle = boundary_functions.Circle(
                 state_idis=[0, 4, 8], 
@@ -263,6 +267,10 @@ class Quad10d_envs():
                 max_val=torch.Tensor([0.5, 0.5, 1.0])
             )
             self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle, rectangle])
+
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = lambda x: torch.min(torch.tensor([obstacle_sdf(x) for obstacle_sdf in [circle.obstacle_sdf, rectangle.obstacle_sdf]]))
+
             # Reach Config
             circle = boundary_functions.Circle(
                 state_idis=[0, 4, 8], 
@@ -271,7 +279,20 @@ class Quad10d_envs():
             )
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
             # NOTE: Combine with the above class and just have different init functions for the different dynamics classes or something
-        ############################################################################
+        elif self.config_num == 4: 
+            # Cylindrical obstacle 
+            self.sdf_avoid = lambda state: torch.norm(state[..., [0,4]], dim=-1) - 0.5 
+
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = self.sdf_avoid
+
+            # Reach Config 
+            circle = boundary_functions.Circle(
+                state_idis=[0, 4, 8], 
+                radius=0.5, 
+                center=torch.Tensor([-3.0, 0.0, 1.75])
+            )
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
         else: 
             raise ValueError("Invalid configuration number for the Quad10d environment.")
         
