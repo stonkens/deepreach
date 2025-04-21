@@ -76,13 +76,19 @@ class Dynamics(ABC):
         if self.deepreach_model=="diff":
             # V(s,t) = boundary_fn(s) + NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * self.value_var / self.value_normto) + self.boundary_fn(self.input_to_coord(input)[..., 1:])
-        elif self.deepreach_model=="exact":
+        elif self.deepreach_model=="exact" or self.deepreach_model=="exact_neg":
+            if self.deepreach_model == "exact_neg":
+                output = -output
             # V(s,t) = boundary_fn(s) + t * NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * input[..., 0] * self.value_var / self.value_normto) + self.boundary_fn(self.input_to_coord(input)[..., 1:])
+        elif self.deepreach_model=="exact_ra_itp":
+            # Learn reach-avoid interpolated temporal difference: 
+            # V_theta = bc + (avoid_bc - bc) * sigmoid_k,5(t * NN)
+            state = self.input_to_coord(input)[..., 1:]
+            return (-self.avoid_fn(state) - self.boundary_fn(state)) * torch.sigmoid(-5 * output * input[..., 0] * self.value_var / self.value_normto) + self.boundary_fn(state)
         else:
             # V(s,t) = NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * self.value_var / self.value_normto) + self.value_mean
-
     # convert model io to real dv
     def io_to_dv(self, input, output):
         dodi = diff_operators.jacobian(output.unsqueeze(dim=-1), input)[0].squeeze(dim=-2)
@@ -97,8 +103,10 @@ class Dynamics(ABC):
             state = self.input_to_coord(input)[..., 1:]
             dvds_term2 = diff_operators.jacobian(self.boundary_fn(state).unsqueeze(dim=-1), state)[0].squeeze(dim=-2)
             dvds = dvds_term1 + dvds_term2
-        elif self.deepreach_model=="exact":
+        elif self.deepreach_model=="exact" or self.deepreach_model=="exact_neg":
             # \partial V/\partial t = NN(s,t) + t * autograd(NN(s,t)) for t (output = NN(s,t))
+            if self.deepreach_model == "exact_neg":
+                output = -output
             dvdt = (self.value_var / self.value_normto) * \
                 (input[..., 0]*dodi[..., 0] + output)
 
@@ -109,6 +117,24 @@ class Dynamics(ABC):
             dvds_term2 = diff_operators.jacobian(self.boundary_fn(
                 state).unsqueeze(dim=-1), state)[0].squeeze(dim=-2)
             dvds = dvds_term1 + dvds_term2
+        elif self.deepreach_model=="exact_ra_itp":
+            state = self.input_to_coord(input)[..., 1:]
+            sig = torch.sigmoid(5 * output * input[..., 0] * self.value_var / self.value_normto)
+            dsig = sig * (1 - sig)
+
+            # dV/dt
+            bc_value = self.boundary_fn(state)
+            avoid_value = self.avoid_fn(state)
+
+            dvdt_exact = 1.0 * (self.value_var / self.value_normto) * (input[..., 0]*dodi[..., 0] + output)
+            dvdt = (-avoid_value - bc_value) * dvdt_exact * dsig
+
+            # grad_x V
+            dvds_NN =  (self.value_var / self.value_normto / self.state_var.to(device=dodi.device)) * dodi[..., 1:] * input[..., 0].unsqueeze(-1)
+            dvds_bc = diff_operators.jacobian(bc_value.unsqueeze(dim=-1), state)[0].squeeze(dim=-2)
+            dvds_avoid = diff_operators.jacobian(avoid_value.unsqueeze(dim=-1), state)[0].squeeze(dim=-2)
+            
+            dvds = dvds_bc + (-dvds_avoid - dvds_bc) * sig.unsqueeze(-1) + ((-avoid_value - bc_value) * dsig).unsqueeze(-1) * dvds_NN
         else:
             # \partial V/\partial t = NN(s,t) for t
             # \partial V/\partial s = NN(s,t) for s

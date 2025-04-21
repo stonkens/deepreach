@@ -269,6 +269,32 @@ class Rectangle(Obstacle):
         return obstacle_sdf
 
 
+class TanhEllipse(Obstacle):
+    def __init__(
+        self,
+        state_idis,
+        offset,
+        center,
+        scaling,
+        padding=0.0,
+        device="cpu",
+    ) -> None:
+        super().__init__(state_idis, padding, device=device)
+        self.offset = torch.tensor(offset).to(device)
+        self.center = torch.tensor(center).to(device)[torch.newaxis]
+        self.scaling = torch.tensor(scaling).to(device)[torch.newaxis]
+
+    def obstacle_sdf(self, x):
+        self.to_device(x.device)
+        # offset - (x1 - center1)^2/s1^2 - (x2 - center2)^2/s2^2 - ... - (xn - centern)^2/sn^2
+        obstacle_sdf = self.offset - torch.sum(self.scaling * (self.center - x[..., self.state_idis]) ** 2, dim=-1)
+        # Positive Inside Ellipse, Negative Outside Ellipse
+        obstacle_sdf = torch.tanh(obstacle_sdf)  
+        return obstacle_sdf      
+    
+    def boundary_sdf(self, x):
+        return self.obstacle_sdf(x)
+
 class Boundary(Obstacle):
     def __init__(self, state_idis, min_val, max_val, padding=0.0, device="cpu") -> None:
         super().__init__(state_idis, padding, device=device)

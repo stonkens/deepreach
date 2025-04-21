@@ -59,7 +59,7 @@ class FCBlock(nn.Module):
     '''
 
     def __init__(self, in_features, out_features, num_hidden_layers, hidden_features,
-                 outermost_linear=False, nonlinearity='relu', weight_init=None):
+                 outermost_activation='linear', nonlinearity='relu', weight_init=None):
         super().__init__()
 
         self.first_layer_init = None
@@ -91,11 +91,12 @@ class FCBlock(nn.Module):
                 BatchLinear(hidden_features, hidden_features), nl
             ))
 
-        if outermost_linear:
+        if outermost_activation == 'linear':
             self.net.append(nn.Sequential(BatchLinear(hidden_features, out_features)))
         else:
+            nl_outer = nls_and_inits[outermost_activation][0]
             self.net.append(nn.Sequential(
-                BatchLinear(hidden_features, out_features), nl
+                BatchLinear(hidden_features, out_features), nl_outer
             ))
 
         self.net = nn.Sequential(*self.net)
@@ -104,6 +105,11 @@ class FCBlock(nn.Module):
 
         if first_layer_init is not None: # Apply special initialization to first layer, if applicable.
             self.net[0].apply(first_layer_init)
+        
+        if outermost_activation != 'linear':
+            outer_init = nls_and_inits[outermost_activation][1]
+            self.net[-1].apply(outer_init)
+            
 
     def forward(self, coords, params=None, **kwargs):
         if params is None:
@@ -117,11 +123,11 @@ class SingleBVPNet(nn.Module):
     '''A canonical representation network for a BVP.'''
 
     def __init__(self, out_features=1, type='sine', in_features=2,
-                 mode='mlp', hidden_features=256, num_hidden_layers=3, **kwargs):
+                 mode='mlp', hidden_features=256, num_hidden_layers=3, outermost_activation='linear', **kwargs):
         super().__init__()
         self.mode = mode
         self.net = FCBlock(in_features=in_features, out_features=out_features, num_hidden_layers=num_hidden_layers,
-                           hidden_features=hidden_features, outermost_linear=True, nonlinearity=type)
+                           hidden_features=hidden_features, outermost_activation=outermost_activation, nonlinearity=type)
         print(self)
 
     def forward(self, model_input, params=None):
