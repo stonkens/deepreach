@@ -73,8 +73,8 @@ if (mode == 'all') or (mode == 'train'):
     p.add_argument('--model_mode', type=str, default='mlp', required=False, choices=['mlp', 'rbf', 'pinn'], help='Whether to use uniform velocity parameter')
     p.add_argument('--num_hl', type=int, default=3, required=False, help='The number of hidden layers')
     p.add_argument('--num_nl', type=int, default=512, required=False, help='Number of neurons per hidden layer.')
-    p.add_argument('--deepreach_model', type=str, default='exact', required=False, choices=['exact', 'diff', 'vanilla'], help='deepreach model')
-
+    p.add_argument('--deepreach_model', type=str, default='exact', required=False, choices=['exact', 'diff', 'vanilla', 'exact_ra_itp', 'exact_neg'], help='deepreach model')
+    p.add_argument('--last_layer_activation', type=str, default='linear', required=False, choices=['linear', 'sigmoid', 'relu'], help='Last layer activation function')
     # training options
     p.add_argument('--epochs_til_ckpt', type=int, default=5000, help='Time interval in seconds until checkpoint is saved.')
     p.add_argument('--steps_til_summary', type=int, default=100, help='Time interval in seconds until tensorboard summary is saved.')
@@ -173,7 +173,8 @@ dataset = dataio.ReachabilityDataset(
     num_src_samples=orig_opt.num_src_samples, num_target_samples=orig_opt.num_target_samples)
 
 model = modules.SingleBVPNet(in_features=dynamics.input_dim, out_features=1, type=orig_opt.model, mode=orig_opt.model_mode,
-                             final_layer_factor=1., hidden_features=orig_opt.num_nl, num_hidden_layers=orig_opt.num_hl)
+                             final_layer_factor=1., hidden_features=orig_opt.num_nl, num_hidden_layers=orig_opt.num_hl,
+                             outermost_activation=orig_opt.last_layer_activation)
 if torch.cuda.is_available():
     device = torch.device("cuda")
     model.to(device)
