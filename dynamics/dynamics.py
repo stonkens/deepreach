@@ -85,7 +85,7 @@ class Dynamics(ABC):
             # Learn reach-avoid interpolated temporal difference: 
             # V_theta = bc + (avoid_bc - bc) * sigmoid_k,5(t * NN)
             state = self.input_to_coord(input)[..., 1:]
-            return (-self.avoid_fn(state) - self.boundary_fn(state)) * torch.sigmoid(-5 * output * input[..., 0] * self.value_var / self.value_normto) + self.boundary_fn(state)
+            return (-self.avoid_fn(state) - self.boundary_fn(state)) * torch.sigmoid(-5 + output * input[..., 0] * self.value_var / self.value_normto) + self.boundary_fn(state)
         else:
             # V(s,t) = NN(s,t) -> NN(s,t) = NN(s,t) * value_var / value_normto
             return (output * self.value_var / self.value_normto) + self.value_mean
@@ -119,7 +119,7 @@ class Dynamics(ABC):
             dvds = dvds_term1 + dvds_term2
         elif self.deepreach_model=="exact_ra_itp":
             state = self.input_to_coord(input)[..., 1:]
-            sig = torch.sigmoid(5 * output * input[..., 0] * self.value_var / self.value_normto)
+            sig = torch.sigmoid(-5 + output * input[..., 0] * self.value_var / self.value_normto)
             dsig = sig * (1 - sig)
 
             # dV/dt
