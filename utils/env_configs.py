@@ -322,6 +322,7 @@ class Quad10d_envs():
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
 
             # Define Plot config: 
+            state_slices[8] = 0.5 # adjust z slice
             self.plot_config = {
                 'state_slices': state_slices,
                 'state_labels': state_labels,
@@ -356,6 +357,7 @@ class Quad10d_envs():
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
 
             # Define Plot config: 
+            state_slices[8] = 0.5 # adjust z slice
             self.plot_config = {
                 'state_slices': state_slices,
                 'state_labels': state_labels,
@@ -411,6 +413,7 @@ class Quad10d_envs():
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
 
             # Define Plot config: 
+            state_slices[8] = 0.5 # adjust z slice
             self.plot_config = {
                 'state_slices': state_slices,
                 'state_labels': state_labels,
