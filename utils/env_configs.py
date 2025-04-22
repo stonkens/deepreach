@@ -199,7 +199,7 @@ class Quad10d_envs():
             - config_num: int: configuration number for the environment 
             - problem_type: str: problem type to generate sdfs ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
         """
-        viable_obstacle_configs = [1,2,3,4]
+        viable_obstacle_configs = [1,3,4, 5, 6]
         viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
 
         self.config_num = config_num 
@@ -304,6 +304,9 @@ class Quad10d_envs():
             }
 
         elif self.config_num == 4: 
+            """
+            Description: Single Cylindrical obstacle in environment center
+            """
             # Cylindrical obstacle 
             self.sdf_avoid = lambda state: torch.norm(state[..., [0,4]], dim=-1) - 0.5 
 
@@ -311,6 +314,95 @@ class Quad10d_envs():
             self.visualize_avoid_obstacle_sdf = self.sdf_avoid
 
             # Reach Config 
+            circle = boundary_functions.Circle(
+                state_idis=[0, 4, 8], 
+                radius=0.5, 
+                center=torch.Tensor([-3.0, 0.0, 1.75])
+            )
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
+
+            # Define Plot config: 
+            self.plot_config = {
+                'state_slices': state_slices,
+                'state_labels': state_labels,
+                'x_axis_idx': 0, # x axis 
+                'y_axis_idx': 4, # y axis
+                'z_axis_idx': [1, 5], # vx and vy
+            }
+        elif self.config_num == 5:
+            """
+            Description: Single Cylindrical obstacle in environment center with space boundary
+            """
+            # Space Boundary
+            space_boundary = boundary_functions.Boundary(
+                state_idis=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                min_val=[-4.0, -1.9, -(np.pi/4  - np.pi/16), -(np.pi  - np.pi/16), -1.9, -1.9, -(np.pi/4  - np.pi/16), -(np.pi  - np.pi/16), 0, -1.9], 
+                max_val=[4.0, 1.9, (np.pi/4  - np.pi/16), (np.pi  - np.pi/16), 1.9, 1.9, (np.pi/4  - np.pi/16), (np.pi  - np.pi/16), 2.5, 1.9]
+                )
+            # Cylindrical Obstacle
+            cylindrical_obstacle_sdf = lambda state: torch.norm(state[..., [0,4]], dim=-1) - 0.5 
+            # Avoid SDF 
+            self.sdf_avoid = lambda x: torch.minimum(space_boundary.boundary_sdf(x), cylindrical_obstacle_sdf(x))
+
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = cylindrical_obstacle_sdf
+
+            # Reach 
+            circle = boundary_functions.Circle(
+                state_idis=[0, 4, 8], 
+                radius=0.5, 
+                center=torch.Tensor([-3.0, 0.0, 1.75])
+            )
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
+
+            # Define Plot config: 
+            self.plot_config = {
+                'state_slices': state_slices,
+                'state_labels': state_labels,
+                'x_axis_idx': 0, # x axis 
+                'y_axis_idx': 4, # y axis
+                'z_axis_idx': [1, 5], # vx and vy
+            }
+
+        elif self.config_num == 6:
+            """
+            Description: Multiple Cylindrical obstacles in environment 
+            """
+
+            def create_cylinder_sdf(state, center, radius): 
+                if type(state) == torch.tensor: 
+                    center = center.to(state.device)
+                return torch.norm(state[..., [0, 4]] - center, dim=-1) - radius
+            
+            def combine_sdfs(x, sdf_list): 
+                sdf_val = sdf_list[0](x)
+                for sdf in sdf_list[1:]:
+                    sdf_val = torch.minimum(sdf_val, sdf(x))
+                return sdf_val
+            
+            center_0 = torch.tensor([0, 0, ])
+            radius_0 = 0.5
+            cylinder_sdf_0 = lambda state: create_cylinder_sdf(state, center=center_0, radius=radius_0) 
+
+            center_1 = torch.tensor([3, 1])
+            radius_1 = 0.5
+            cylinder_sdf_1 = lambda state: create_cylinder_sdf(state, center=center_1, radius=radius_1)
+
+            center_2 = torch.tensor([-3, 1]) 
+            radius_2 = 0.5
+            cylinder_sdf_2 = lambda state: create_cylinder_sdf(state, center=center_2, radius=radius_2)
+
+            center_3 = torch.tensor([2, -0.5])
+            radius_3 = 0.5
+            cylinder_sdf_3 = lambda state: create_cylinder_sdf(state, center=center_3, radius=radius_3)
+
+            self.sdf_avoid = lambda state: combine_sdfs(x=state, sdf_list=[cylinder_sdf_0, cylinder_sdf_1, cylinder_sdf_2, cylinder_sdf_3])
+            
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = self.sdf_avoid
+
+            # Reach Config 
+            # Reach 
             circle = boundary_functions.Circle(
                 state_idis=[0, 4, 8], 
                 radius=0.5, 
