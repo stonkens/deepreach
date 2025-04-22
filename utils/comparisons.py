@@ -112,6 +112,15 @@ class GroundTruthHJSolution:
         self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
         self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0, 0, 0, 0))
         self.optimal_control_and_disturbance_f = jax.vmap(self.hj_dynamics.optimal_control_and_disturbance, in_axes=(0, 0, 0))
+
+    def load_value_function(self, value_functions): 
+        # Arg: value_function: jnp.array of saved value function
+        self.value_functions = value_functions
+
+        self.interpolation_f = jax.vmap(self.grid.interpolate, in_axes=(None, 0))
+        self.dsdt_f = jax.vmap(self.hj_dynamics.__call__, in_axes=(0, 0, 0, 0))
+        self.optimal_control_and_disturbance_f = jax.vmap(self.hj_dynamics.optimal_control_and_disturbance, in_axes=(0, 0, 0))
+        return 
         
     def __call__(self, state, time):
         raise NotImplementedError("Broken")
