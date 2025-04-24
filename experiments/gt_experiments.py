@@ -355,7 +355,7 @@ class GTExperiment(ABC):
                 self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
         
             else:
-                safety_metrics = QuantifyBinarySafety(self.dataset, validation_dict)
+                safety_metrics = QuantifyBinarySafetyHJR(self.dataset, validation_dict)
                 self.validation_metrics[parametric_key]["metrics"].append(safety_metrics)
 
             standard_value_validator = ValueThresholdEvaluatorandValidator(eval_fn=self.dataset.dynamics.boundary_fn, v_min=0.0, v_max=2.0)
