@@ -28,6 +28,9 @@ if use_wandb:
     p.add_argument('--wandb_entity', type=str, required=True, help='wandb entity')
     p.add_argument('--wandb_group', type=str, required=False, help='wandb group')
 
+p.add_argument('--debugging', default=False, action='store_true', help='debugging mode')
+debugging = p.parse_known_args()[0].debugging
+
 mode = p.parse_known_args()[0].mode
 
 # load dynamics_class choices dynamically from dynamics module
@@ -56,7 +59,6 @@ if (mode == 'all') or (mode == 'train'):
     experiment_params = {name: param for name, param in inspect.signature(experiment_class.init_special).parameters.items() if name != 'self'}
     for param in experiment_params.keys():
         p.add_argument('--' + param, type=experiment_params[param].annotation, required=True, help='special experiment_class argument')
-
     # simulation data source options
     p.add_argument('--numpoints', type=int, default=65000, help='Number of points in simulation data source __getitem__.')  # sensitive number (lower means faster so less points)
     p.add_argument('--pretrain', action='store_true', default=False, required=False, help='Pretrain dirichlet conditions')
@@ -124,38 +126,41 @@ if use_wandb:
         reinit = True
     )
     wandb.config.update(opt)
+if not debugging:
+    experiment_dir = os.path.join(opt.experiments_dir, opt.experiment_name)
+    if (mode == 'all') or (mode == 'train'):
+        # create experiment dir
+        if os.path.exists(experiment_dir):
+            print("The experiment directory %s already exists"%experiment_dir)
+            print('Exiting.')
+            quit()
+        os.makedirs(experiment_dir)
+    elif mode == 'test':
+        # confirm that experiment dir already exists
+        if not os.path.exists(experiment_dir):
+            raise RuntimeError('Cannot run test mode: experiment directory not found!')
 
-experiment_dir = os.path.join(opt.experiments_dir, opt.experiment_name)
-if (mode == 'all') or (mode == 'train'):
-    # create experiment dir
-    if os.path.exists(experiment_dir):
-        print("The experiment directory %s already exists"%experiment_dir)
-        print('Exiting.')
-        quit()
-    os.makedirs(experiment_dir)
-elif mode == 'test':
-    # confirm that experiment dir already exists
-    if not os.path.exists(experiment_dir):
-        raise RuntimeError('Cannot run test mode: experiment directory not found!')
+    current_time = datetime.now()
+    # log current config
+    with open(os.path.join(experiment_dir, 'config_%s.txt' % current_time.strftime('%m_%d_%Y_%H_%M')), 'w') as f:
+        for arg, val in vars(opt).items():
+            f.write(arg + ' = ' + str(val) + '\n')
 
-current_time = datetime.now()
-# log current config
-with open(os.path.join(experiment_dir, 'config_%s.txt' % current_time.strftime('%m_%d_%Y_%H_%M')), 'w') as f:
-    for arg, val in vars(opt).items():
-        f.write(arg + ' = ' + str(val) + '\n')
+    if (mode == 'all') or (mode == 'train'):
+        # set counter_end appropriately if needed
+        if opt.counter_end == -1:
+            opt.counter_end = opt.num_epochs
 
-if (mode == 'all') or (mode == 'train'):
-    # set counter_end appropriately if needed
-    if opt.counter_end == -1:
-        opt.counter_end = opt.num_epochs
+        # log original options
+        with open(os.path.join(experiment_dir, 'orig_opt.pickle'), 'wb') as opt_file:
+            pickle.dump(opt, opt_file)
 
-    # log original options
-    with open(os.path.join(experiment_dir, 'orig_opt.pickle'), 'wb') as opt_file:
-        pickle.dump(opt, opt_file)
-
-# load original experiment settings
-with open(os.path.join(experiment_dir, 'orig_opt.pickle'), 'rb') as opt_file:
-    orig_opt = pickle.load(opt_file)
+    # load original experiment settings
+    with open(os.path.join(experiment_dir, 'orig_opt.pickle'), 'rb') as opt_file:
+        orig_opt = pickle.load(opt_file)
+else:
+    experiment_dir = None
+    orig_opt = opt
 
 # set the experiment seed
 torch.manual_seed(orig_opt.seed)
@@ -192,7 +197,7 @@ validation_dict = {'x_resolution': orig_opt.val_x_resolution, 'y_resolution': or
                    'dt': 0.01}
 
 experiment = experiment_class(model=model, dataset=dataset, experiment_dir=experiment_dir, use_wandb=use_wandb, 
-                              device=device, validation_dict=validation_dict)
+                              device=device, validation_dict=validation_dict, debugging=debugging)
 experiment.init_special(**{argname: getattr(orig_opt, argname) for argname in inspect.signature(experiment_class.init_special).parameters.keys() if argname != 'self'})
 
 if (mode == 'all') or (mode == 'train'):

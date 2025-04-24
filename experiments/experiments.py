@@ -39,7 +39,7 @@ def parameter_list_to_suffix(parameter_list):
     return parameter_suffix
 
 class Experiment(ABC):
-    def __init__(self, model, dataset, experiment_dir, use_wandb, device, validation_dict={}):
+    def __init__(self, model, dataset, experiment_dir, use_wandb, device, debugging=False, validation_dict={}):
         """
         Sets up the experiment with the model, dataset, and experiment directory.
         For validation it does the following:
@@ -53,6 +53,7 @@ class Experiment(ABC):
         self.experiment_dir = experiment_dir
         self.use_wandb = use_wandb
         self.device = device
+        self.debugging = debugging  
 
         self.rollout_batch_size = 20 #5000
         self.visual_rollout_batch_size = 20 
@@ -80,8 +81,12 @@ class Experiment(ABC):
             parametric_suffix = parameter_list_to_suffix(parametric_test_slice) #"0.0p0.0" #"_" + parametric_key if parametric_test_slice is not None else parametric_key 
             print("parameter_suffix: ", parametric_suffix)
             
-
-            if (hasattr(self.dataset.dynamics, 'parametric_dims') and (self.dataset.dynamics.state_dim - len(self.dataset.dynamics.parametric_dims) <= 5)) or (self.dataset.dynamics.state_dim <= 5):
+            is_parametric = hasattr(self.dataset.dynamics, 'parametric_dims')
+            if is_parametric:
+                state_dims = self.dataset.dynamics.state_dim - len(self.dataset.dynamics.parametric_dims)
+            else:
+                state_dims = self.dataset.dynamics.state_dim
+            if (state_dims <= 5) and (not debugging):
             # if self.dataset.dynamics.state_dim <= 5:
                 # Generate ground truth for the validation metrics
                 # TODO: Move this into GroundTruthHJSolution initialization
@@ -176,7 +181,7 @@ class Experiment(ABC):
             validation_dict['rollout_batch_size'] = self.visual_rollout_batch_size 
             traj_rollout_viz = RolloutTrajectoriesWithVisuals(self.dataset, validation_dict, parametric=parametric_test_slice)
 
-            if (hasattr(self.dataset.dynamics, 'parametric_dims') and (self.dataset.dynamics.state_dim - len(self.dataset.dynamics.parametric_dims) <= 5)) or (self.dataset.dynamics.state_dim <= 5):
+            if (state_dims <= 5) and (not debugging):
                 traj_rollout.sampling_states = gt_rollout.sampling_states
                 traj_rollout_viz.sampling_states = gt_rollout_viz.sampling_states
 
@@ -266,17 +271,18 @@ class Experiment(ABC):
         if use_lbfgs:
             optim = torch.optim.LBFGS(lr=lr, params=self.model.parameters(), max_iter=50000, max_eval=50000,
                                     history_size=50, line_search_fn='strong_wolfe')
+        if not self.debugging:
+            training_dir = os.path.join(self.experiment_dir, 'training')
+            
+            summaries_dir = os.path.join(training_dir, 'summaries')
+            if not os.path.exists(summaries_dir):
+                os.makedirs(summaries_dir)
 
-        training_dir = os.path.join(self.experiment_dir, 'training')
-        
-        summaries_dir = os.path.join(training_dir, 'summaries')
-        if not os.path.exists(summaries_dir):
-            os.makedirs(summaries_dir)
-
-        checkpoints_dir = os.path.join(training_dir, 'checkpoints')
-        if not os.path.exists(checkpoints_dir):
-            os.makedirs(checkpoints_dir)
-
+            checkpoints_dir = os.path.join(training_dir, 'checkpoints')
+            if not os.path.exists(checkpoints_dir):
+                os.makedirs(checkpoints_dir)
+        else:
+            summaries_dir = None
         writer = SummaryWriter(summaries_dir)
 
         total_steps = 0
@@ -399,7 +405,7 @@ class Experiment(ABC):
                     train_losses.append(train_loss.item())
                     writer.add_scalar("total_train_loss", train_loss, total_steps)
 
-                    if not total_steps % steps_til_summary:
+                    if not total_steps % steps_til_summary and not self.debugging:
                         torch.save(self.model.state_dict(),
                                 os.path.join(checkpoints_dir, 'model_current.pth'))
                         # summary_fn(model, model_input, gt, model_output, writer, total_steps)
@@ -628,10 +634,11 @@ class Experiment(ABC):
                         'epoch': epoch+1,
                         'model': self.model.state_dict(),
                         'optimizer': optim.state_dict()}
-                    torch.save(checkpoint,
-                        os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % (epoch+1)))
-                    np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % (epoch+1)),
-                        np.array(train_losses))
+                    if not self.debugging:
+                        torch.save(checkpoint,
+                            os.path.join(checkpoints_dir, 'model_epoch_%04d.pth' % (epoch+1)))
+                        np.savetxt(os.path.join(checkpoints_dir, 'train_losses_epoch_%04d.txt' % (epoch+1)),
+                            np.array(train_losses))
                     try: 
                         self.validate(epoch=epoch+1)
                     except: 
