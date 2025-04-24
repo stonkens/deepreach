@@ -67,7 +67,7 @@ class FCBlock(nn.Module):
         # Dictionary that maps nonlinearity name to the respective function, initialization, and, if applicable,
         # special first-layer initialization scheme
         nls_and_inits = {'sine':(Sine(), sine_init, first_layer_sine_init),
-                         'relu':(nn.ReLU(inplace=True), init_weights_normal, None),
+                         'relu':(nn.ReLU(inplace=True), init_weights_relu, None),
                          'sigmoid':(nn.Sigmoid(), init_weights_xavier, None),
                          'tanh':(nn.Tanh(), init_weights_xavier, None),
                          'selu':(nn.SELU(inplace=True), init_weights_selu, None),
@@ -151,6 +151,12 @@ def init_weights_normal(m):
         if hasattr(m, 'weight'):
             nn.init.kaiming_normal_(m.weight, a=0.0, nonlinearity='relu', mode='fan_in')
 
+def init_weights_relu(m):
+    if type(m) == BatchLinear or type(m) == nn.Linear:
+        if hasattr(m, 'weight'):
+            num_input = m.weight.size(-1)
+            nn.init.normal_(m.weight, std=math.sqrt(6.0) / math.sqrt(num_input) / 15.0)
+            # 15.0 is a trial
 
 def init_weights_selu(m):
     if type(m) == BatchLinear or type(m) == nn.Linear:
