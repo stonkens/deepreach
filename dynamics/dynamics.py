@@ -5156,10 +5156,10 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
         curr_z_vel_dist_slope = state[..., 12]
         ######### Parametric changes #########
 
-        ######### TimeVarying changes #########
-        max_x_vel_dist = self.max_x_vel_dist - torch.clamp(time * curr_x_vel_dist_slope.view(*curr_x_vel_dist_slope.shape, 1), min=None, max=self.max_x_vel_dist).squeeze(-1)
-        max_y_vel_dist = self.max_y_vel_dist - torch.clamp(time * curr_y_vel_dist_slope.view(*curr_x_vel_dist_slope.shape, 1), min=None, max=self.max_x_vel_dist).squeeze(-1)
-        max_z_vel_dist = self.max_z_vel_dist - torch.clamp(time * curr_z_vel_dist_slope.view(*curr_x_vel_dist_slope.shape, 1), min=None, max=self.max_x_vel_dist).squeeze(-1)
+        ######### TimeVarying changes ######### 
+        max_x_vel_dist = self.max_x_vel_dist - torch.clamp(time.squeeze(-1) * curr_x_vel_dist_slope, min=None, max=self.max_x_vel_dist)
+        max_y_vel_dist = self.max_y_vel_dist - torch.clamp(time.squeeze(-1) * curr_y_vel_dist_slope, min=None, max=self.max_x_vel_dist)
+        max_z_vel_dist = self.max_z_vel_dist - torch.clamp(time.squeeze(-1) * curr_z_vel_dist_slope, min=None, max=self.max_x_vel_dist)
         ######### TimeVarying changes #########
 
         # Disturbance: [d_x, d_y, d_z]
