@@ -1,3 +1,8 @@
+# jax preallocate false: XLA_PYTHON_CLIENT_PREALLOCATE=false
+# as env param
+import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 import jax.numpy as jnp
 import jax
 from torch2jax import t2j, j2t
@@ -11,7 +16,7 @@ class GroundTruthHJSolution:
     """
     Ground truth solution using Dynamic Programming, only for 5 state dimensions or less.
     """
-    def __init__(self, hj_dynamics, solve=True):
+    def __init__(self, hj_dynamics, solve=True, num_time_steps=51):
         self.hj_dynamics = hj_dynamics
         self.is_parametric = False 
         if hasattr(self.hj_dynamics.torch_dynamics, "parametric_dims"):
@@ -98,7 +103,7 @@ class GroundTruthHJSolution:
 
         min_time = self.hj_dynamics.tMin
         max_time = -self.hj_dynamics.tMax
-        self.times = jnp.linspace(min_time, max_time, 5)  # FIXME: Hardcoded (has to be same  as with QuantifyBinary)
+        self.times = jnp.linspace(min_time, max_time, num_time_steps)  # FIXME: Hardcoded (has to be same  as with QuantifyBinary)
         
         if solve: # Default True
             self.solve_hjr()
