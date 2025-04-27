@@ -253,6 +253,8 @@ class Quad2DAttitude_envs():
 # TODO: NOTE: Need to consolidate this with the above environment configurations - have the actual initialization 
 # be localized to a function call or something 
 
+########################################################### Quad 10d ###########################################################
+
 class Quad10d_envs(): 
     """
     Environment Configurations for 10 d quadcopter
@@ -489,6 +491,148 @@ class Quad10d_envs():
 
         else: 
             raise ValueError("Invalid configuration number for the Quad10d environment.")
+        
+        self.configure_reach_avoid_fns()
+        return 
+
+    def configure_reach_avoid_fns(self, ): 
+        """
+        Function to properly change the sign of the reach and avoid functions so that they align
+        with deepreach conventions according to the problem we want to solve
+
+        NOTE: Starting with standard convention: 
+            - Avoid: Negative = Unsafe, Positive = Safe
+            - Reach: Negative = Outside Reach/Unsafe, Positive = Inside Reach/Safe
+
+        Returns: None - function adjusts the parameters: 
+            - sdf_reach
+            - sdf_avoid
+
+        For convention reference see: https://www.notion.so/Deepreach-Standard-Conventions-1a82da3e70b280589e4bfcee23e398a4  
+        """
+        
+        if self.problem_type == "avoid": 
+            # Negative Unsafe, Positive Safe
+            self.avoid_fn = self.sdf_avoid 
+            self.reach_fn = None 
+            self.boundary_fn = self.sdf_avoid 
+        elif self.problem_type == "reach": 
+            # WRONG: Negative Outside Reach/Unsafe, Positive Inside Reach/Safe
+            # Positive Unsafe/Outside reach set, Negative Safe/Inside reach set
+            self.avoid_fn = None 
+            self.reach_fn = lambda x: -1 * self.sdf_reach(x) #lambda x: -1 * self.sdf_reach(x) 
+            self.boundary_fn = lambda x: -1 * self.sdf_reach(x)
+        elif self.problem_type == "reach_avoid" or self.problem_type == "reach_avoid_ci": 
+            # Avoid: Negative Unsafe, Positive Safe
+            self.avoid_fn = self.sdf_avoid
+            # Reach: Positive Unsafe/Outside reach set, Negative Safe/Inside reach set
+            self.reach_fn = lambda x: -1 * self.sdf_reach(x)
+            # Boundary Function: Positive Unsafe, Negative Safe
+            self.boundary_fn = lambda x: torch.maximum(self.reach_fn(x), -self.avoid_fn(x))
+        else: 
+            raise ValueError("Invalid problem type for the Quad2DAttitude environment.")
+        
+
+########################################################### Quad 6d ###########################################################
+
+class Quad6d_envs(): 
+    """
+    Environment Configurations for 10 d quadcopter
+    """
+
+    def __init__(self, config_num, problem_type):
+        """
+        Args: 
+            - config_num: int: configuration number for the environment 
+            - problem_type: str: problem type to generate sdfs ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
+        """
+        viable_obstacle_configs = [1,3,4, 5, 6]
+        viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
+
+        self.config_num = config_num 
+        self.problem_type = problem_type 
+
+        assert config_num in viable_obstacle_configs, "Invalid configuration number for the Quad10d environment."
+        assert problem_type in viable_problem_types, "Invalid problem type for the Quad10d environment."
+
+        # Sign Conventions: 
+        # SDF Avoid: Negative = Unsafe, Positive = Safe
+        # SDF Reach: Negative = Outside Reach/Unsafe, Positive = Inside Reach/Safe
+
+        state_slices = [0, 0, 0, 0, 0, 0]
+        state_labels = ['x', 'y', 'z', 'v_x', 'v_y', 'v_z']
+
+        # State: [0, 1, 2,  3,   4,   5 ]
+        # State: [x, y, z, v_x, v_y, v_z]
+        if self.config_num == 1:
+            # Obstacle Config: 1
+            # Avoid Config 
+            circle = boundary_functions.Circle(
+                state_idis=[0, 1, 2],
+                radius=0.5,  
+                center=torch.Tensor([2.0, 0.0, 1.5])
+            )
+            self.sdf_avoid = circle.obstacle_sdf
+
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = circle.obstacle_sdf
+            
+            # Reach Config
+            circle = boundary_functions.Circle(
+                state_idis=[0, 1, 2], 
+                radius=0.5, 
+                center=torch.Tensor([-3.0, 0.0, 1.25])
+            )
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
+            # NOTE: Combine with the above class and just have different init functions for the different dynamics classes or something
+
+            # Define Plot config: 
+            state_slices[3] = 1.25 # adjust z 
+            self.plot_config = {
+                'state_slices': state_slices, 
+                'state_labels': state_labels, 
+                'x_axis_idx': 0, # x-axis index
+                'y_axis_idx': 2, # z-axis index
+                'z_axis_idx': [3, 4], # vx, vy
+            }
+        elif self.config_num == 2:
+            # Obstacle Config: 1
+            # Avoid Config 
+            space_boundary = boundary_functions.Boundary(
+                state_idis=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                min_val=[-4.0, -1.9, 0 -1.9, -1.9, -1.9], 
+                max_val=[4.0, 1.9, 2.5, 1.9, 1.9, 1.9]
+                )
+            circle = boundary_functions.Circle(
+                state_idis=[0, 1, 2],
+                radius=0.5,  
+                center=torch.Tensor([2.0, 0.0, 1.5])
+            )
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [circle])
+
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = circle.obstacle_sdf
+            
+            # Reach Config
+            circle = boundary_functions.Circle(
+                state_idis=[0, 1, 2], 
+                radius=0.5, 
+                center=torch.Tensor([-3.0, 0.0, 1.25])
+            )
+            self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
+            # NOTE: Combine with the above class and just have different init functions for the different dynamics classes or something
+
+            # Define Plot config: 
+            state_slices[3] = 1.25 # adjust z 
+            self.plot_config = {
+                'state_slices': state_slices, 
+                'state_labels': state_labels, 
+                'x_axis_idx': 0, # x-axis index
+                'y_axis_idx': 2, # z-axis index
+                'z_axis_idx': [3, 4], # vx, vy
+            }
+        else: 
+            raise ValueError("Invalid configuration number for the Quad 6D environment.")
         
         self.configure_reach_avoid_fns()
         return 
