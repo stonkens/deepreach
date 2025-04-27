@@ -447,19 +447,19 @@ class Quad10d_envs():
                     sdf_val = torch.minimum(sdf_val, sdf(x))
                 return sdf_val
             
-            center_0 = torch.tensor([0, 0, ])
+            center_0 = torch.tensor([-3., -1., ])
             radius_0 = 0.5
             cylinder_sdf_0 = lambda state: create_cylinder_sdf(state, center=center_0, radius=radius_0) 
 
-            center_1 = torch.tensor([3, 1])
+            center_1 = torch.tensor([3., 1.])
             radius_1 = 0.5
             cylinder_sdf_1 = lambda state: create_cylinder_sdf(state, center=center_1, radius=radius_1)
 
-            center_2 = torch.tensor([-3, 1]) 
+            center_2 = torch.tensor([-3., 1.]) 
             radius_2 = 0.5
             cylinder_sdf_2 = lambda state: create_cylinder_sdf(state, center=center_2, radius=radius_2)
 
-            center_3 = torch.tensor([2, -0.5])
+            center_3 = torch.tensor([3., -1.])
             radius_3 = 0.5
             cylinder_sdf_3 = lambda state: create_cylinder_sdf(state, center=center_3, radius=radius_3)
 
@@ -472,13 +472,13 @@ class Quad10d_envs():
             # Reach 
             circle = boundary_functions.Circle(
                 state_idis=[0, 4, 8], 
-                radius=0.5, 
-                center=torch.Tensor([-3.0, -0.5, 1.75])
+                radius=0.75, 
+                center=torch.Tensor([0, 0, 1.25])
             )
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
 
             # Define Plot config: 
-            state_slices[8] = 0.5 # adjust z slice
+            state_slices[8] = 1.25 # adjust z slice
             self.plot_config = {
                 'state_slices': state_slices,
                 'state_labels': state_labels,
