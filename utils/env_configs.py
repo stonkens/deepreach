@@ -473,7 +473,7 @@ class Quad10d_envs():
             circle = boundary_functions.Circle(
                 state_idis=[0, 4, 8], 
                 radius=0.5, 
-                center=torch.Tensor([-3.0, 0.0, 1.75])
+                center=torch.Tensor([-3.0, -0.5, 1.75])
             )
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x)
 
