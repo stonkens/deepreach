@@ -437,7 +437,7 @@ class Quad10d_envs():
             """
 
             def create_cylinder_sdf(state, center, radius): 
-                if type(state) == torch.tensor: 
+                if isinstance(state, torch.Tensor):
                     center = center.to(state.device)
                 return torch.norm(state[..., [0, 4]] - center, dim=-1) - radius
             
