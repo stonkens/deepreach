@@ -4,6 +4,13 @@ try:
 except: 
     from deepreach.utils import diff_operators
 
+try: 
+    from deepreach.utils import env_configs 
+    from deepreach.utils.boundary_functions import InputSet
+except: 
+    from utils import env_configs 
+    from utils.boundary_functions import InputSet
+
 import math
 import torch
 
@@ -4088,8 +4095,10 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         
         self.control_space = InputSet(lo=[-max_pitch, -max_roll, min_thrust],
                                       hi=[max_pitch, max_roll, max_thrust])
-        self.disturbance_space = InputSet(lo=[-max_x_vel_dist, -max_y_vel_dist, -max_z_vel_dist,], 
-                                          hi=[max_x_vel_dist, max_y_vel_dist, max_z_vel_dist])
+        # self.disturbance_space = InputSet(lo=[-max_x_vel_dist, -max_y_vel_dist, -max_z_vel_dist,], 
+        #                                   hi=[max_x_vel_dist, max_y_vel_dist, max_z_vel_dist])
+        self.disturbance_space = InputSet(lo=[-1, -1, -1],
+                                          hi=[1, 1, 1])
         
         if self.problem_type == "avoid":
             loss_type = 'brt_hjivi'
@@ -4123,12 +4132,12 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
 
         # Value mean and var 
         # OLD: value mean and var that we used 
-        # value_mean = 0.2
-        # value_var = 0.5
+        value_mean = 0.2
+        value_var = 0.5
 
-        # # New! Will's value mean and var 
-        value_mean=(math.sqrt(4.0**2 + 4.0**2) - 0.5) / 2
-        value_var=math.sqrt(4.0**2 + 4.0**2)
+        # # # New! Will's value mean and var 
+        # value_mean=(math.sqrt(4.0**2 + 4.0**2) - 0.5) / 2
+        # value_var=math.sqrt(4.0**2 + 4.0**2)
 
         super().__init__(
             loss_type=loss_type, set_mode=set_mode, 
@@ -4142,6 +4151,27 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             value_normto=0.02,
             deepreach_model="exact"
         )
+
+        if self.problem_type == "reach_avoid": 
+            # Try resetting value var
+            try: 
+                from dynamics.dynamics_utils import sample_value_mean_var
+            except: 
+                from deepreach.dynamics.dynamics_utils import sample_value_mean_var
+                
+            print("\n\nOld Value Mean: ", self.value_mean)
+            print("Old Value Var: ", self.value_var)
+
+            new_value_mean, new_value_var = sample_value_mean_var(dynamics=self, batch_size=50000, states_to_sample=1e6)
+            self.value_mean = new_value_mean 
+            self.value_var = new_value_var
+
+            print("New Value Mean: ", self.value_mean)
+            print("New Value Var: ", self.value_var)
+            print("\n\n")
+
+        return 
+    
 
     def state_test_range(self): 
         return [
@@ -4202,9 +4232,9 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         # Disturbance: [d_x, d_y, d_z]
         disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
         
-        disturbance_jacobian[..., 1, 0] = 1
-        disturbance_jacobian[..., 5, 1] = 1
-        disturbance_jacobian[..., 9, 2] = 1
+        disturbance_jacobian[..., 1, 0] = self.max_x_vel_dist
+        disturbance_jacobian[..., 5, 1] = self.max_y_vel_dist
+        disturbance_jacobian[..., 9, 2] = self.max_z_vel_dist
 
         return disturbance_jacobian.to(torch.float32) 
 
@@ -4247,20 +4277,597 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
     def optimal_disturbance(self, state, dvds): 
         if self.set_mode == "avoid": 
             # Avoid: Minimize
-            d_x = torch.where(dvds[..., 1] < 0, self.max_x_vel_dist, -self.max_x_vel_dist)
-            d_y = torch.where(dvds[..., 5] < 0, self.max_y_vel_dist, -self.max_y_vel_dist)
-            d_z = torch.where(dvds[..., 9] < 0, self.max_z_vel_dist, -self.max_z_vel_dist)
+            d_x = torch.where(dvds[..., 1] < 0, 1, -1 ) #self.max_x_vel_dist, -self.max_x_vel_dist)
+            d_y = torch.where(dvds[..., 5] < 0, 1, -1 ) #self.max_y_vel_dist, -self.max_y_vel_dist)
+            d_z = torch.where(dvds[..., 9] < 0, 1, -1 ) #self.max_z_vel_dist, -self.max_z_vel_dist)
         elif self.set_mode == "reach":
             # Reach: Maximize
-            d_x = torch.where(dvds[..., 1] > 0, self.max_x_vel_dist, -self.max_x_vel_dist)
-            d_y = torch.where(dvds[..., 5] > 0, self.max_y_vel_dist, -self.max_y_vel_dist)
-            d_z = torch.where(dvds[..., 9] > 0, self.max_z_vel_dist, -self.max_z_vel_dist)
+            d_x = torch.where(dvds[..., 1] > 0, 1, -1 ) #self.max_x_vel_dist, -self.max_x_vel_dist)
+            d_y = torch.where(dvds[..., 5] > 0, 1, -1 ) #self.max_y_vel_dist, -self.max_y_vel_dist)
+            d_z = torch.where(dvds[..., 9] > 0, 1, -1 ) #self.max_z_vel_dist, -self.max_z_vel_dist)
         else: 
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
         return torch.cat((d_x[..., None], d_y[..., None], d_z[..., None]), dim=-1)
 
     def plot_config(self):
         return self.env_config.plot_config
+
+class Quad10D_Consolidated_TimeVarying(Quad10D_Consolidated): 
+    
+    # Dynamics reference: Equation 3: https://arxiv.org/pdf/2101.05916 
+    def __init__(self, gravity: float, max_pitch: float, max_roll: float, 
+                 min_thrust: float, max_thrust: float,
+                 max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, 
+                 x_vel_dist_slope: float = 0.0, y_vel_dist_slope: float = 0.0, z_vel_dist_slope: float = 0.0,
+                 # NOTE: no disturbance directly on position
+                 # Constants: 
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
+                 set_mode: str='avoid', 
+                 boundary_cfg_num: int = 1, problem_type: str = "avoid"):
+        """
+        Args: 
+            - max_pitch: Max desired pitch angle you can set
+            - max_roll: Max desired roll angle you can set: 
+            - min_thrust: Min thrust you can set
+            - max_thrust: Max thrust you can set
+            - max_x_vel_dist: Max magnitude of disturbance on x velocity
+            - max_y_vel_dist: Max magnitude of disturbance on y velocity
+            - max_z_vel_dist: Max magnitude of disturbance on z velocity
+
+            - x_vel_dist_slope: float: slope of the disturbance on x velocity - for time varying
+            - y_vel_dist_slope: float: slope of the disturbance on x velocity - for time varying
+            - z_vel_dist_slope: float: slope of the disturbance on x velocity - for time varying
+
+            - d0: float: constant
+            - d1: float: constant
+            - n0: float: constant
+            - k_T: float: thrust multiplier
+            - m: float: mass
+            - set_mode: Set mode for the quadcopter: avoid or reach 
+            - boundary_cfg_num: int: environment configuration to use 
+            - problem_type: str: Type of problem to solve: see env_configs.py for details
+        """
+
+        # Initialize Normal 10D System 
+        super().__init__(gravity=gravity, max_pitch=max_pitch, max_roll=max_roll,
+                         min_thrust=min_thrust, max_thrust=max_thrust,
+                         max_x_vel_dist=max_x_vel_dist, max_y_vel_dist=max_y_vel_dist, max_z_vel_dist=max_z_vel_dist,
+                         d0=d0, d1=d1, n0=n0, k_T=k_T, mass=mass,
+                         set_mode=set_mode, boundary_cfg_num=boundary_cfg_num, problem_type=problem_type)
+
+        ######### TimeVarying changes #########
+        self.x_vel_dist_slope = x_vel_dist_slope
+        self.y_vel_dist_slope = y_vel_dist_slope
+        self.z_vel_dist_slope = z_vel_dist_slope
+        ######### TimeVarying changes #########
+
+        """ State: [
+        0: x, 
+        1: v_x, 
+        2: theta_x, 
+        3: omega_x, 
+        4: y, 
+        5: v_y, 
+        6: theta_y, 
+        7: omega_y, 
+        8: z, 
+        9: v_z
+        ]
+        """
+        return 
+
+    def disturbance_jacobian(self, state, time):        
+        ######### TimeVarying changes #########
+        max_x_vel_dist = self.max_x_vel_dist - torch.clamp(time * self.x_vel_dist_slope, min=None, max=self.max_x_vel_dist) 
+        max_y_vel_dist = self.max_y_vel_dist - torch.clamp(time * self.y_vel_dist_slope, min=None, max=self.max_y_vel_dist) 
+        max_z_vel_dist = self.max_z_vel_dist - torch.clamp(time * self.z_vel_dist_slope, min=None, max=self.max_z_vel_dist) 
+        ######### TimeVarying changes #########
+
+        # Disturbance: [d_x, d_y, d_z]
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        
+        disturbance_jacobian[..., 1, 0] = max_x_vel_dist
+        disturbance_jacobian[..., 5, 1] = max_y_vel_dist
+        disturbance_jacobian[..., 9, 2] = max_z_vel_dist
+
+        return disturbance_jacobian.to(torch.float32) 
+
+class Quad10D_Consolidated_TimeVarying_parametric(Quad10D_Consolidated_TimeVarying): 
+    
+    # Dynamics reference: Equation 3: https://arxiv.org/pdf/2101.05916 
+    def __init__(self, gravity: float, max_pitch: float, max_roll: float, 
+                 min_thrust: float, max_thrust: float,
+                 max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, 
+                 x_vel_dist_slope: float = 0.0, y_vel_dist_slope: float = 0.0, z_vel_dist_slope: float = 0.0,
+                 # NOTE: no disturbance directly on position
+                 # Constants: 
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
+                 set_mode: str='avoid', 
+                 boundary_cfg_num: int = 1, problem_type: str = "avoid"):
+        """
+        Args: 
+            - max_pitch: Max desired pitch angle you can set
+            - max_roll: Max desired roll angle you can set: 
+            - min_thrust: Min thrust you can set
+            - max_thrust: Max thrust you can set
+            - max_x_vel_dist: Max magnitude of disturbance on x velocity
+            - max_y_vel_dist: Max magnitude of disturbance on y velocity
+            - max_z_vel_dist: Max magnitude of disturbance on z velocity
+
+            - x_vel_dist_slope: PARAMETRIC VAL: float: slope of the disturbance on x velocity - for time varying - the max value this will be
+            - y_vel_dist_slope: PARAMETRIC VAL: float: slope of the disturbance on x velocity - for time varying - the max value this will be 
+            - z_vel_dist_slope: PARAMETRIC VAL: float: slope of the disturbance on x velocity - for time varying - the max value this will be 
+
+            - d0: float: constant
+            - d1: float: constant
+            - n0: float: constant
+            - k_T: float: thrust multiplier
+            - m: float: mass
+            - set_mode: Set mode for the quadcopter: avoid or reach 
+            - boundary_cfg_num: int: environment configuration to use 
+            - problem_type: str: Type of problem to solve: see env_configs.py for details
+        """
+
+        self.gravity = gravity # Default: 9.8
+        self.max_pitch = max_pitch # Default: 0.2
+        self.max_roll = max_roll # Default: 0.2 
+        self.min_thrust = min_thrust # Default: 7
+        self.max_thrust = max_thrust # Default: 14
+        self.max_x_vel_dist = max_x_vel_dist # Default: 0.3 
+        self.max_y_vel_dist = max_y_vel_dist # Default: 0.3
+        self.max_z_vel_dist = max_z_vel_dist # Default: 0.3 
+        
+        self.boundary_cfg_num = boundary_cfg_num 
+        self.problem_type = problem_type 
+
+        # Constants 
+        self.d1 = d1
+        self.d0 = d0
+        self.n0 = n0
+        self.k_T = k_T
+        self.mass = mass
+
+        # Define Environment
+        self.env_config = env_configs.Quad10d_envs(config_num=self.boundary_cfg_num,
+                                                   problem_type=self.problem_type)
+        
+        self.control_space = InputSet(lo=[-max_pitch, -max_roll, min_thrust],
+                                      hi=[max_pitch, max_roll, max_thrust])
+        self.disturbance_space = InputSet(lo=[-1, -1, -1],
+                                          hi=[1, 1, 1])
+        
+        if self.problem_type == "avoid":
+            loss_type = 'brt_hjivi'
+        elif self.problem_type == "reach":
+            loss_type = 'brt_hjivi'
+        elif self.problem_type == "reach_avoid":
+            loss_type = 'brat_hjivi'
+        elif self.problem_type == "reach_avoid_ci":
+            loss_type = 'brat_ci_hjivi'
+
+        """ State: [
+        0: x, 
+        1: v_x, 
+        2: theta_x, 
+        3: omega_x, 
+        4: y, 
+        5: v_y, 
+        6: theta_y, 
+        7: omega_y, 
+        8: z, 
+        9: v_z
+        10: x_vel_dist_slope,
+        11: y_vel_dist_slope, 
+        12: z_vel_dist_slope 
+        ]
+        """
+        # TODO: NOTE: might want to change later! 
+        state_mean = [0, 0, 0, 0, 
+                      0, 0, 0, 0, 
+                      1.3, 0]
+        state_var = [5.0, 2.0, np.pi/4, np.pi, 
+                     2.5, 2.0, np.pi/4, np.pi, 
+                     1.5, 2.0]
+
+        # Value mean and var 
+        value_mean = 0.2
+        value_var = 0.5
+
+        ######### TimeVarying changes #########
+        self.x_vel_dist_slope = x_vel_dist_slope
+        self.y_vel_dist_slope = y_vel_dist_slope
+        self.z_vel_dist_slope = z_vel_dist_slope
+        ######### TimeVarying changes #########
+
+
+        ######### Parametric changes #########
+        self.parametric_names = ['x_vel_dist_slope', 'y_vel_dist_slope', 'z_vel_dist_slope'] # names corresponding to parametric values in non-parametric class 
+        self.parametric_dims = [10, 11, 12] # parametric indices in the state vector
+        self.state_dims = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] # state dimension indices in the state vector
+        self.coord_parametric_dims = list(np.array(self.parametric_dims) + 1) # parametric indices in coord vector: state vector with time
+        self.coord_state_dims = list(np.array(self.state_dims) + 1) # state dimension indices in coord vector: state vector with time
+
+        state_mean = state_mean + [self.x_vel_dist_slope/2, self.y_vel_dist_slope/2, self.z_vel_dist_slope] # mean of state and parametric dimensions
+        state_var = state_var + [self.x_vel_dist_slope/2 + 0.05, self.y_vel_dist_slope/2 + 0.05, self.z_vel_dist_slope/2 + 0.05] # variance of state and parametric dimensions - 0.05 offset for proper coverage of boundaries
+        ######### Parametric changes #########
+
+        super().__init__(
+            loss_type=loss_type, set_mode=set_mode, 
+            ######### Parametric changes #########
+            state_dim=10 + len(self.parametric_dims), input_dim=11 + len(self.parametric_dims), control_dim=3, disturbance_dim=3, 
+            periodic_dims=[], #[2, 6],
+            state_mean=state_mean, 
+            state_var=state_var, 
+            ######### Parametric changes #########
+            # TODO: NOTE: might want to change later! 
+            value_mean=value_mean, 
+            value_var=value_var, 
+            value_normto=0.02,
+            deepreach_model="exact"
+        )
+
+        if self.problem_type == "reach_avoid": 
+            # Try resetting value var
+            try: 
+                from dynamics.dynamics_utils import sample_value_mean_var
+            except: 
+                from deepreach.dynamics.dynamics_utils import sample_value_mean_var
+                
+            print("\n\nOld Value Mean: ", self.value_mean)
+            print("Old Value Var: ", self.value_var)
+
+            new_value_mean, new_value_var = sample_value_mean_var(dynamics=self, batch_size=50000, states_to_sample=1e6)
+            self.value_mean = new_value_mean 
+            self.value_var = new_value_var
+
+            print("New Value Mean: ", self.value_mean)
+            print("New Value Var: ", self.value_var)
+            print("\n\n")
+
+        return 
+    
+
+    def state_test_range(self): 
+        return [
+            [-5, 5],  # x
+            [-1.4, 1.4] , # v_x
+            [-np.pi/4, np.pi/4], # theta_x
+            [-np.pi, np.pi], # omega_x
+            [-2, 2], # y
+            [-1.4, 1.4] , # v_y
+            [-np.pi/4, np.pi/4], # theta_y
+            [-np.pi, np.pi], # omega_y
+            [-0.2, 2.8], # z
+            [-1.4, 1.4], # v_z
+            ######### Parametric changes #########
+            # Only test worst case parametric values for now 
+            [self.x_vel_dist_slope, self.x_vel_dist_slope], # x_vel_dist_slope
+            [self.y_vel_dist_slope, self.y_vel_dist_slope], # y_vel_dist_slope
+            [self.z_vel_dist_slope, self.z_vel_dist_slope], # z_vel_dist_slope
+            ######### Parametric changes #########
+        ]
+    
+    ######### Parametric changes #########
+    def parameter_test_slices(self):
+        """
+        Returns the parametric slices to evaluate and plot with - in progress evaluation
+        """
+        return [[0., 0., 0.], 
+                [self.x_vel_dist_slope/2, self.y_vel_dist_slope/2, self.z_vel_dist_slope/2], 
+                [self.x_vel_dist_slope, self.y_vel_dist_slope, self.z_vel_dist_slope]]
+    ######### Parametric changes #########
+    
+    # Quadcopter Dynamics
+    # Control    : S_x, S_y, T_z
+    # Disturbance: d_x, d_y, d_z
+    # Constants  : d0, d1, n0, k_T, m
+
+    # \dot x       = v_x 
+    # \dot v_x     = g * tan(theta_x) + d_x # NOTE: might want to try: g*theta_x + d_x instead
+    # \dot theta_x = -d1 * theta_x + omega_x
+    # \dot omega_x = -d0 * theta_x + n0 * S_x
+    # \dot y       = v_y
+    # \dot v_y     = g * tan(theta_y) + d_y
+    # \dot theta_y = -d1 * theta_y + omega_y
+    # \dot omega_y = -d0 * theta_y + n0 * S_y
+    # \dot z       = v_z
+    # \dot v_z     = (k_T/m) T_z - g + d_z # NOTE: might want to try: T_z - g + d_z setting T_z: [6,13] instead or k_T = 0.9 
+    # \dot x_vel_dist_slope = 0
+    # \dot y_vel_dist_slope = 0
+    # \dot z_vel_dist_slope = 0
+    def open_loop_dynamics(self, state, time): 
+        dsdt = torch.zeros_like(state)
+        dsdt[..., 0]  = state[..., 1]
+        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) # might try self.gravity * theta_x
+        dsdt[..., 2]  = -self.d1 * state[..., 2] + state[..., 3]
+        dsdt[..., 3]  = -self.d0 * state[..., 2] 
+        dsdt[..., 4]  = state[..., 5]
+        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6])
+        dsdt[..., 6]  = -self.d1 * state[..., 6] + state[..., 7]
+        dsdt[..., 7]  = -self.d0 * state[..., 6]
+        dsdt[..., 8]  = state[..., 9]
+        dsdt[..., 9] = -self.gravity 
+        return dsdt 
+
+    def control_jacobian(self, state, time): 
+        # Control: [S_x, S_y, T_z]
+        control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+        
+        control_jacobian[...,  3, 0] = self.n0
+        control_jacobian[..., 7, 1] = self.n0
+        control_jacobian[..., 9, 2] = self.k_T/self.mass
+
+        return control_jacobian.to(torch.float32)
+
+    def disturbance_jacobian(self, state, time):
+        ######### TimeVarying changes #########
+        curr_x_vel_dist_slope = state[..., 10]
+        curr_y_vel_dist_slope = state[..., 11]
+        curr_z_vel_dist_slope = state[..., 12]
+
+        max_x_vel_dist = self.max_x_vel_dist - torch.clamp(time * curr_x_vel_dist_slope, min=None, max=self.max_x_vel_dist) 
+        max_y_vel_dist = self.max_y_vel_dist - torch.clamp(time * curr_y_vel_dist_slope, min=None, max=self.max_y_vel_dist) 
+        max_z_vel_dist = self.max_z_vel_dist - torch.clamp(time * curr_z_vel_dist_slope, min=None, max=self.max_z_vel_dist) 
+        ######### TimeVarying changes #########
+
+        # Disturbance: [d_x, d_y, d_z]
+        disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+        
+        disturbance_jacobian[..., 1, 0] = max_x_vel_dist
+        disturbance_jacobian[..., 5, 1] = max_y_vel_dist
+        disturbance_jacobian[..., 9, 2] = max_z_vel_dist
+
+        return disturbance_jacobian.to(torch.float32) 
+
+    def reach_fn(self,  state): 
+        return self.env_config.reach_fn(state)
+    
+    def avoid_fn(self, state): 
+        return self.env_config.avoid_fn(state)
+    
+    def boundary_fn(self, state):
+        return self.env_config.boundary_fn(state)
+    
+    def sample_target_state(self, num_samples):
+        raise NotImplementedError
+    
+    def cost_fn(self, state_traj):
+        return torch.min(self.boundary_fn(state_traj), dim=-1).values
+    
+    def hamiltonian(self, state, time, dvds): 
+        optimal_control = self.optimal_control(state=state, dvds=dvds).squeeze(0)
+        optimal_disturbance = self.optimal_disturbance(state=state, dvds=dvds).squeeze(0)
+        flow = self.dsdt(state.squeeze(0), optimal_control, optimal_disturbance, time.squeeze(0))
+        return torch.sum(flow*dvds, dim=-1)
+
+    def optimal_control(self, state, dvds): 
+        if self.set_mode == "avoid": 
+            # Avoid: Maximize
+            S_x = torch.where(dvds[..., 3] < 0, -self.max_pitch, self.max_pitch)
+            S_y = torch.where(dvds[..., 7] < 0, -self.max_roll, self.max_roll)
+            T_z = torch.where(dvds[..., 9] < 0, self.min_thrust, self.max_thrust)
+        elif self.set_mode == "reach": 
+            # Reach: Minimize 
+            S_x = torch.where(dvds[..., 3] > 0, -self.max_pitch, self.max_pitch)
+            S_y = torch.where(dvds[..., 7] > 0, -self.max_roll, self.max_roll)
+            T_z = torch.where(dvds[..., 9] > 0, self.min_thrust, self.max_thrust)
+        else: 
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((S_x[..., None], S_y[..., None], T_z[..., None]), dim=-1)
+
+    def optimal_disturbance(self, state, dvds): 
+        if self.set_mode == "avoid": 
+            # Avoid: Minimize
+            d_x = torch.where(dvds[..., 1] < 0, 1, -1 ) 
+            d_y = torch.where(dvds[..., 5] < 0, 1, -1 ) 
+            d_z = torch.where(dvds[..., 9] < 0, 1, -1 ) 
+        elif self.set_mode == "reach":
+            # Reach: Maximize
+            d_x = torch.where(dvds[..., 1] > 0, 1, -1 ) 
+            d_y = torch.where(dvds[..., 5] > 0, 1, -1 ) 
+            d_z = torch.where(dvds[..., 9] > 0, 1, -1 ) 
+        else: 
+            raise NotImplementedError("{self.set_mode} is not a valid set mode")
+        return torch.cat((d_x[..., None], d_y[..., None], d_z[..., None]), dim=-1)
+
+    def plot_config(self):
+        ret_plot_config = self.env_config.plot_config
+        ######### Parametric changes #########
+        ret_plot_config['state_slices'] += list(np.zeros(len(self.parametric_dims)))
+        ret_plot_config['state_labels'] += self.parametric_names
+        ######### Parametric changes #########
+        return ret_plot_config 
+
+###################################### Quadcopter: 6 Dimensional  ###################################### 
+# class Quad6DAttitude_Consolidated(Dynamics):
+#     def __init__(self, gravity: float, max_pitch: float, max_roll: float, min_thrust: float, max_thrust: float,
+#                  max_pos_dist: float = 0.0, max_vel_dist: float = 0.0, set_mode: str='avoid', 
+#                  boundary_cfg_num: int = 1, problem_type: str = "avoid"):
+#         """
+#         Added args: 
+#             - boundary_cfg_num: int: Number of boundary configurations to use
+#             - problem_type: str: Type of problem to solve: see env_configs.py for details 
+#         """
+#         self.gravity = gravity
+#         self.max_pitch = max_pitch 
+#         self.max_roll = max_roll
+#         self.min_thrust = min_thrust
+#         self.max_thrust = max_thrust
+#         self.max_pos_dist = max_pos_dist
+#         self.max_vel_dist = max_vel_dist
+
+#         self.boundary_cfg_num = boundary_cfg_num
+#         self.problem_type = problem_type 
+
+#         # Define Environment 
+#         try: 
+#             from deepreach.utils import env_configs 
+#             from deepreach.utils.boundary_functions import InputSet
+#         except: 
+#             from utils import env_configs
+#             from utils.boundary_functions import InputSet
+        
+#         self.env_config = env_configs.Quad2DAttitude_envs(config_num=self.boundary_cfg_num, 
+#                                                           problem_type=self.problem_type)
+
+        
+#         # self.control_space = InputSet(lo=-self.evader_omega_max, hi=self.evader_omega_max)
+#         # self.disturbance_space = InputSet(lo=-self.pursuer_omega_max, hi=self.pursuer_omega_max)
+#         self.control_space = InputSet(lo=[-max_angle, min_thrust], hi=[max_angle, max_thrust])
+#         self.disturbance_space = InputSet(lo=[-max_pos_dist, -max_pos_dist, -max_vel_dist, -max_vel_dist], 
+#                                      hi=[max_pos_dist, max_pos_dist, max_vel_dist, max_vel_dist])
+
+
+#         if self.problem_type == "avoid":
+#             loss_type = 'brt_hjivi'
+#         elif self.problem_type == "reach":
+#             loss_type = 'brt_hjivi'
+#         elif self.problem_type == "reach_avoid": 
+#             loss_type = 'brat_hjivi'
+#         elif self.problem_type == "reach_avoid_ci": 
+#             loss_type = 'brat_ci_hjivi'
+#         super().__init__(
+#             loss_type=loss_type, set_mode=set_mode,
+#             # loss_type='brt_hjivi', set_mode=set_mode,
+#             state_dim=4, input_dim=5, control_dim=2, disturbance_dim=4,
+#             state_mean=[0., 1.3, 0, 0],
+#             state_var=[5., 1.5, 2, 2],
+#             periodic_dims=[],
+#             value_mean=0.2,
+#             value_var=0.5,
+#             value_normto=0.02,
+#             deepreach_model="exact"
+#         )
+
+#     def state_test_range(self):
+#         return [
+#             [-5, 5], 
+#             [-0.2, 2.8],
+#             [-1.4, 1.4],
+#             [-1.4, 1.4]
+#         ]
+    
+#     # Quadcopter Dynamics
+#     # \dot x = v_x 
+#     # \dot y = v_y 
+#     # \dot z = v_z 
+#     # \dot v_x = g * u_1 + d_1
+#     # \dot v_y = g * u_2 + d_2
+#     # \dot v_z = u_3 - g + d_3
+    
+#     def open_loop_dynamics(self, state, time):
+#         dsdt = torch.zeros_like(state)
+
+#         dsdt[..., 0] = state[..., 3] 
+#         dsdt[..., 1] = state[..., 4]
+#         dsdt[..., 2] = state[..., 5]
+
+#         dsdt[..., 3] = 0
+#         dsdt[..., 4] = 0
+#         dsdt[..., 5] =  - self.gravity 
+
+#         return dsdt
+
+#     def control_jacobian(self, state, time):
+#         control_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.control_dim), device=state.device)
+#         # torch.tensor([
+#         #     [0., 0., 0.],
+#         #     [0., 0., 0.],
+#         #     [0., 0., 0.],
+#         #     [self.gravity, 0., 0.],
+#         #     [0., self.gravity, 0.],
+#         #     [0., 0., 1.],
+#         # ])
+        
+#         control_jacobian[..., 3, 0] = self.gravity
+#         control_jacobian[..., 4, 1] = self.gravity
+#         control_jacobian[..., 5, 2] = 1.0
+#         return control_jacobian
+        
+#     def disturbance_jacobian(self, state, time):
+#         disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
+#         # torch.tensor([
+#         #     [0., 0., 0.],
+#         #     [0., 0., 0.],
+#         #     [0., 0., 0.],
+#         #     [1., 0., 0.],
+#         #     [0., 1., 0.],
+#         #     [0., 0., 1.],
+#         # ])
+
+#         disturbance_jacobian[..., 3, 0] = 1.0
+#         disturbance_jacobian[..., 4, 1] = 1.0
+#         disturbance_jacobian[..., 5, 2] = 1.0
+#         return disturbance_jacobian
+
+#     def reach_fn(self, state): 
+#         return self.env_config.reach_fn(state)
+    
+#     def avoid_fn(self, state): 
+#         return self.env_config.avoid_fn(state)
+
+#     def boundary_fn(self, state):
+#         return self.env_config.boundary_fn(state)
+
+#     def sample_target_state(self, num_samples):
+#         raise NotImplementedError
+    
+#     def cost_fn(self, state_traj):
+#         return torch.min(self.boundary_fn(state_traj), dim=-1).values
+
+#     def hamiltonian(self, state, time, dvds):
+#         optimal_control = self.optimal_control(state, dvds)
+#         optimal_disturbance = self.optimal_disturbance(state, dvds)
+#         flow = self.dsdt(state, optimal_control, optimal_disturbance, time)
+#         return torch.sum(flow*dvds, dim=-1)
+    
+#     def optimal_control(self, state, dvds):
+#         if self.set_mode == "avoid":
+#             # a1 = torch.sign(dvds[..., 2]) * self.max_angle
+#             # a2 = self.min_thrust + torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+#             a1 = torch.where(dvds[..., 2] < 0, -self.max_angle, self.max_angle)
+#             a2 = torch.where(dvds[..., 3] < 0, self.min_thrust, self.max_thrust)
+#         elif self.set_mode == "reach":
+#             # a1 = -torch.sign(dvds[..., 2]) * self.max_angle
+#             # a2 = self.max_thrust - torch.sign(dvds[..., 3]) * (self.max_thrust - self.min_thrust)
+#             a1 = torch.where(dvds[..., 2] > 0, -self.max_angle, self.max_angle)
+#             a2 = torch.where(dvds[..., 3] > 0, self.min_thrust, self.max_thrust)
+#         else:
+#             raise NotImplementedError("{self.set_mode} is not a valid set mode")
+#         return torch.cat((a1[..., None], a2[..., None]), dim=-1)
+
+#     def optimal_disturbance(self, state, dvds):
+#         if self.set_mode == "avoid":
+#             # d1 = -torch.sign(dvds[..., 0]) * self.max_pos_dist
+#             # d2 = -torch.sign(dvds[..., 1]) * self.max_pos_dist
+#             # d3 = -torch.sign(dvds[..., 2]) * self.max_vel_dist
+#             # d4 = -torch.sign(dvds[..., 3]) * self.max_vel_dist
+#             d1 = torch.where(dvds[..., 0] > 0, -self.max_pos_dist, self.max_pos_dist)
+#             d2 = torch.where(dvds[..., 1] > 0, -self.max_pos_dist, self.max_pos_dist)
+#             d3 = torch.where(dvds[..., 2] > 0, -self.max_vel_dist, self.max_vel_dist)
+#             d4 = torch.where(dvds[..., 3] > 0, -self.max_vel_dist, self.max_vel_dist)
+#         elif self.set_mode == "reach":
+#             # d1 = torch.sign(dvds[..., 0]) * self.max_pos_dist
+#             # d2 = torch.sign(dvds[..., 1]) * self.max_pos_dist
+#             # d3 = torch.sign(dvds[..., 2]) * self.max_vel_dist
+#             # d4 = torch.sign(dvds[..., 3]) * self.max_vel_dist
+#             d1 = torch.where(dvds[..., 0] < 0, -self.max_pos_dist, self.max_pos_dist)
+#             d2 = torch.where(dvds[..., 1] < 0, -self.max_pos_dist, self.max_pos_dist)
+#             d3 = torch.where(dvds[..., 2] < 0, -self.max_vel_dist, self.max_vel_dist)
+#             d4 = torch.where(dvds[..., 3] < 0, -self.max_vel_dist, self.max_vel_dist)
+#         else:
+#             raise NotImplementedError("{self.set_mode} is not a valid set mode")
+#         return torch.cat((d1[..., None], d2[..., None], d3[..., None], d4[..., None]), dim=-1)
+    
+#     def plot_config(self):
+#         return {
+#             'state_slices': [0, 0, 0, 0],
+#             'state_labels': ['y', 'z', r'$v_y$', r'$v_z$'],
+#             'x_axis_idx': 0,
+#             'y_axis_idx': 1,
+#             'z_axis_idx': [2, 3],
+#         }
+
 
 
 if __name__ == "__main__":
