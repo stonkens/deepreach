@@ -569,7 +569,7 @@ class Quad6d_envs():
             # Avoid Config 
             circle = boundary_functions.Circle(
                 state_idis=[0, 1, 2],
-                radius=0.5,  
+                radius=1.0,  
                 center=torch.Tensor([2.0, 0.0, 1.5])
             )
             self.sdf_avoid = circle.obstacle_sdf
