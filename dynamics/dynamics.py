@@ -4803,9 +4803,9 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
         curr_y_vel_dist_slope = state[..., 11]
         curr_z_vel_dist_slope = state[..., 12]
 
-        max_x_vel_dist = self.max_x_vel_dist - torch.clamp(time * curr_x_vel_dist_slope, min=None, max=self.max_x_vel_dist).squeeze(-1) 
-        max_y_vel_dist = self.max_y_vel_dist - torch.clamp(time * curr_y_vel_dist_slope, min=None, max=self.max_y_vel_dist).squeeze(-1)  
-        max_z_vel_dist = self.max_z_vel_dist - torch.clamp(time * curr_z_vel_dist_slope, min=None, max=self.max_z_vel_dist).squeeze(-1)  
+        max_x_vel_dist = self.max_x_vel_dist - torch.clamp(time * curr_x_vel_dist_slope.unsqueeze(-1), min=None, max=self.max_x_vel_dist).squeeze(-1) 
+        max_y_vel_dist = self.max_y_vel_dist - torch.clamp(time * curr_y_vel_dist_slope.unsqueeze(-1), min=None, max=self.max_y_vel_dist).squeeze(-1)  
+        max_z_vel_dist = self.max_z_vel_dist - torch.clamp(time * curr_z_vel_dist_slope.unsqueeze(-1), min=None, max=self.max_z_vel_dist).squeeze(-1)  
         ######### TimeVarying changes #########
 
         # Disturbance: [d_x, d_y, d_z]
@@ -4851,7 +4851,7 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
             T_z = torch.where(dvds[..., 9] > 0, self.min_thrust, self.max_thrust)
         else: 
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
-        return torch.cat((S_x[..., None], S_y[..., None], T_z[..., None]), dim=-1)
+        return torch.cat((S_x[..., None], S_y[..., None], T_z[..., None]), dim=-1).to(torch.float32)
 
     def optimal_disturbance(self, state, dvds): 
         if self.set_mode == "avoid": 
@@ -4866,15 +4866,20 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
             d_z = torch.where(dvds[..., 9] > 0, 1, -1 ) 
         else: 
             raise NotImplementedError("{self.set_mode} is not a valid set mode")
-        return torch.cat((d_x[..., None], d_y[..., None], d_z[..., None]), dim=-1)
+        return torch.cat((d_x[..., None], d_y[..., None], d_z[..., None]), dim=-1).to(torch.float32)
 
     def plot_config(self):
-        ret_plot_config = self.env_config.plot_config
-        ######### Parametric changes #########
-        ret_plot_config['state_slices'] += list(np.zeros(len(self.parametric_dims)))
-        ret_plot_config['state_labels'] += self.parametric_names
-        ######### Parametric changes #########
-        return ret_plot_config 
+        ret_plot_config = dict(self.env_config.plot_config)
+
+        return {
+            ######### Parametric changes #########
+            'state_slices': ret_plot_config['state_slices'] + list(np.zeros(len(self.parametric_dims))),
+            'state_labels': ret_plot_config['state_labels'] + self.parametric_names,
+            ######### Parametric changes #########
+            'x_axis_idx': ret_plot_config['x_axis_idx'],
+            'y_axis_idx': ret_plot_config['y_axis_idx'],
+            'z_axis_idx': ret_plot_config['z_axis_idx'],
+        }
 
 ###################################### Quadcopter: 6 Dimensional  ###################################### 
 # class Quad6DAttitude_Consolidated(Dynamics):
