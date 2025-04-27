@@ -4506,9 +4506,9 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
             [-1.4, 1.4], # v_z
             ######### Parametric changes #########
             # Only test worst case parametric values for now 
-            [self.x_vel_dist_slope, self.x_vel_dist_slope], # x_vel_dist_slope
-            [self.y_vel_dist_slope, self.y_vel_dist_slope], # y_vel_dist_slope
-            [self.z_vel_dist_slope, self.z_vel_dist_slope], # z_vel_dist_slope
+            [self.max_x_vel_dist, self.max_x_vel_dist], 
+            [self.max_y_vel_dist, self.max_y_vel_dist], 
+            [self.max_z_vel_dist, self.max_z_vel_dist], 
             ######### Parametric changes #########
         ]
 
@@ -4518,8 +4518,8 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         Returns the parametric slices to evaluate and plot with - in progress evaluation
         """
         return [[0., 0., 0.], 
-                [self.x_vel_dist_slope/2, self.y_vel_dist_slope/2, self.z_vel_dist_slope/2], 
-                [self.x_vel_dist_slope, self.y_vel_dist_slope, self.z_vel_dist_slope]]
+                [self.max_x_vel_dist/2, self.max_y_vel_dist/2, self.max_z_vel_dist/2], 
+                [self.max_x_vel_dist, self.max_y_vel_dist, self.max_z_vel_dist]]
     ######### Parametric changes #########
     
     # Quadcopter Dynamics
