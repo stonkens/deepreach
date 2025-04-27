@@ -4444,12 +4444,25 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         # value_mean=(math.sqrt(4.0**2 + 4.0**2) - 0.5) / 2
         # value_var=math.sqrt(4.0**2 + 4.0**2)
 
+        ######### Parametric changes #########
+        self.parametric_names = ['max_x_vel_dist', 'max_y_vel_dist', 'max_z_vel_dist'] # names corresponding to parametric values in non-parametric class 
+        self.parametric_dims = [10, 11, 12] # parametric indices in the state vector
+        self.state_dims = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] # state dimension indices in the state vector
+        self.coord_parametric_dims = list(np.array(self.parametric_dims) + 1) # parametric indices in coord vector: state vector with time
+        self.coord_state_dims = list(np.array(self.state_dims) + 1) # state dimension indices in coord vector: state vector with time
+
+        state_mean = state_mean + [self.max_x_vel_dist/2, self.max_y_vel_dist/2, self.max_z_vel_dist/2] # mean of state and parametric dimensions
+        state_var = state_var + [self.max_x_vel_dist/2 + 0.05, self.max_y_vel_dist/2 + 0.05, self.max_z_vel_dist/2 + 0.05] # variance of state and parametric dimensions - 0.05 offset for proper coverage of boundaries
+        ######### Parametric changes #########
+
         super().__init__(
             loss_type=loss_type, set_mode=set_mode, 
-            state_dim=10, input_dim=11, control_dim=3, disturbance_dim=3, 
+            ######### Parametric changes #########
+            state_dim=10 + len(self.parametric_dims), input_dim=11 + len(self.parametric_dims), control_dim=3, disturbance_dim=3, 
             periodic_dims=[], #[2, 6],
             state_mean=state_mean, 
             state_var=state_var, 
+            ######### Parametric changes #########
             # TODO: NOTE: might want to change later! 
             value_mean=value_mean, 
             value_var=value_var, 
@@ -4490,8 +4503,24 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
             [-np.pi/4, np.pi/4], # theta_y
             [-np.pi, np.pi], # omega_y
             [-0.2, 2.8], # z
-            [-1.4, 1.4] # v_z
+            [-1.4, 1.4], # v_z
+            ######### Parametric changes #########
+            # Only test worst case parametric values for now 
+            [self.x_vel_dist_slope, self.x_vel_dist_slope], # x_vel_dist_slope
+            [self.y_vel_dist_slope, self.y_vel_dist_slope], # y_vel_dist_slope
+            [self.z_vel_dist_slope, self.z_vel_dist_slope], # z_vel_dist_slope
+            ######### Parametric changes #########
         ]
+
+    ######### Parametric changes #########
+    def parameter_test_slices(self):
+        """
+        Returns the parametric slices to evaluate and plot with - in progress evaluation
+        """
+        return [[0., 0., 0.], 
+                [self.x_vel_dist_slope/2, self.y_vel_dist_slope/2, self.z_vel_dist_slope/2], 
+                [self.x_vel_dist_slope, self.y_vel_dist_slope, self.z_vel_dist_slope]]
+    ######### Parametric changes #########
     
     # Quadcopter Dynamics
     # Control    : S_x, S_y, T_z
@@ -4535,12 +4564,18 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         return control_jacobian.to(torch.float32)
 
     def disturbance_jacobian(self, state, time):
+        ######### Parametric changes #########
+        curr_max_x_vel_dist = state[..., 10]
+        curr_max_y_vel_dist = state[..., 11]
+        curr_max_z_vel_dist = state[..., 12]
+        ######### Parametric changes #########
+
         # Disturbance: [d_x, d_y, d_z]
         disturbance_jacobian = torch.zeros((*state.shape[:-1], self.state_dim, self.disturbance_dim), device=state.device)
         
-        disturbance_jacobian[..., 1, 0] = self.max_x_vel_dist
-        disturbance_jacobian[..., 5, 1] = self.max_y_vel_dist
-        disturbance_jacobian[..., 9, 2] = self.max_z_vel_dist
+        disturbance_jacobian[..., 1, 0] = curr_max_x_vel_dist
+        disturbance_jacobian[..., 5, 1] = curr_max_y_vel_dist
+        disturbance_jacobian[..., 9, 2] = curr_max_z_vel_dist
 
         return disturbance_jacobian.to(torch.float32) 
 
@@ -4596,7 +4631,17 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         return torch.cat((d_x[..., None], d_y[..., None], d_z[..., None]), dim=-1).to(torch.float32)
 
     def plot_config(self):
-        return self.env_config.plot_config
+        ret_plot_config = dict(self.env_config.plot_config)
+
+        return {
+            ######### Parametric changes #########
+            'state_slices': ret_plot_config['state_slices'] + list(np.zeros(len(self.parametric_dims))),
+            'state_labels': ret_plot_config['state_labels'] + self.parametric_names,
+            ######### Parametric changes #########
+            'x_axis_idx': ret_plot_config['x_axis_idx'],
+            'y_axis_idx': ret_plot_config['y_axis_idx'],
+            'z_axis_idx': ret_plot_config['z_axis_idx'],
+        }
 
 
 
