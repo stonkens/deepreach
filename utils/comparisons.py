@@ -16,7 +16,7 @@ class GroundTruthHJSolution:
     """
     Ground truth solution using Dynamic Programming, only for 5 state dimensions or less.
     """
-    def __init__(self, hj_dynamics, solve=True, num_time_steps=51):
+    def __init__(self, hj_dynamics, solve=True, num_time_steps=5):
         self.hj_dynamics = hj_dynamics
         self.is_parametric = False 
         if hasattr(self.hj_dynamics.torch_dynamics, "parametric_dims"):
