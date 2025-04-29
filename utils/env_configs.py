@@ -266,7 +266,7 @@ class Quad10d_envs():
             - config_num: int: configuration number for the environment 
             - problem_type: str: problem type to generate sdfs ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
         """
-        viable_obstacle_configs = [1,3,4, 5, 6]
+        viable_obstacle_configs = [1,3,4, 5, 6, 7]
         viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
 
         self.config_num = config_num 
@@ -488,6 +488,32 @@ class Quad10d_envs():
                 'y_axis_idx': 4, # y axis
                 'z_axis_idx': [1, 5], # vx and vy
             }
+
+        elif self.config_num == 7:
+            """
+            Description: One
+            """
+
+            # Cylindrical obstacle 
+            self.sdf_avoid = lambda state: torch.norm(state[..., [0,4]], dim=-1) - 0.5 
+
+            self.sdf_reach = lambda state: torch.norm(state[..., [0,4]], dim=-1) - 1.25
+ 
+            
+            # For 3d visualization: only obstacles no boundary
+            self.visualize_avoid_obstacle_sdf = self.sdf_avoid
+
+
+            # Define Plot config: 
+            state_slices[8] = 1.25 # adjust z slice
+            self.plot_config = {
+                'state_slices': state_slices,
+                'state_labels': state_labels,
+                'x_axis_idx': 0, # x axis 
+                'y_axis_idx': 4, # y axis
+                'z_axis_idx': [1, 5], # vx and vy
+            }
+
 
         else: 
             raise ValueError("Invalid configuration number for the Quad10d environment.")
