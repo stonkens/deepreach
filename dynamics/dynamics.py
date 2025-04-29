@@ -4042,7 +4042,7 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
                  max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, 
                  # NOTE: no disturbance directly on position
                  # Constants: 
-                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1, c_x: float = 0.3, c_y: float = 0.3,
                  set_mode: str='avoid', 
                  boundary_cfg_num: int = 1, problem_type: str = "avoid"):
         """
@@ -4059,6 +4059,8 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
             - n0: float: constant
             - k_T: float: thrust multiplier
             - m: float: mass
+            - c_x: float: x axis drag coefficient
+            - c_y: float: y axis drag coefficient
             - set_mode: Set mode for the quadcopter: avoid or reach 
             - boundary_cfg_num: int: environment configuration to use 
             - problem_type: str: Type of problem to solve: see env_configs.py for details
@@ -4081,6 +4083,8 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         self.n0 = n0
         self.k_T = k_T
         self.mass = mass
+        self.c_x = c_x
+        self.c_y = c_y
 
         # Define Environment
         try: 
@@ -4126,8 +4130,8 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         state_mean = [0, 0, 0, 0, 
                       0, 0, 0, 0, 
                       1.3, 0]
-        state_var = [5.0, 2.0, np.pi/4, np.pi, 
-                     2.5, 2.0, np.pi/4, np.pi, 
+        state_var = [5.0, 2.0, 0.25, 1.0, 
+                     2.5, 2.0, 0.25, 1.0, 
                      1.5, 2.0]
 
         # Value mean and var 
@@ -4180,12 +4184,12 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
         return [
             [-5, 5],  # x
             [-1.4, 1.4] , # v_x
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1, 1], # omega_x
             [-2, 2], # y
             [-1.4, 1.4] , # v_y
-            [-np.pi/4, np.pi/4], # theta_y
-            [-np.pi, np.pi], # omega_y
+            [-0.24, 0.24], # theta_y
+            [-1, 1], # omega_y
             [-0.2, 2.8], # z
             [-1.4, 1.4] # v_z
         ]
@@ -4210,11 +4214,11 @@ class Quad10D_Consolidated(ControlandDisturbanceAffineDynamics):
     def open_loop_dynamics(self, state, time): 
         dsdt = torch.zeros_like(state)
         dsdt[..., 0]  = state[..., 1]
-        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) # might try self.gravity * theta_x
+        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) - self.c_x*state[..., 1] # might try self.gravity * theta_x
         dsdt[..., 2]  = -self.d1 * state[..., 2] + state[..., 3]
         dsdt[..., 3]  = -self.d0 * state[..., 2] 
         dsdt[..., 4]  = state[..., 5]
-        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6])
+        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6]) - self.c_y*state[..., 5] # might try self.gravity * theta_y
         dsdt[..., 6]  = -self.d1 * state[..., 6] + state[..., 7]
         dsdt[..., 7]  = -self.d0 * state[..., 6]
         dsdt[..., 8]  = state[..., 9]
@@ -4305,7 +4309,7 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
                  max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, 
                  # NOTE: no disturbance directly on position
                  # Constants: 
-                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1, c_x: float = 0.3, c_y: float = 0.3,
                  set_mode: str='avoid', 
                  boundary_cfg_num: int = 1, problem_type: str = "avoid"):
         """
@@ -4322,6 +4326,8 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
             - n0: float: constant
             - k_T: float: thrust multiplier
             - m: float: mass
+            - c_x: float: x axis drag coefficient
+            - c_y: float: y axis drag coefficient
             - set_mode: Set mode for the quadcopter: avoid or reach 
             - boundary_cfg_num: int: environment configuration to use 
             - problem_type: str: Type of problem to solve: see env_configs.py for details
@@ -4344,6 +4350,8 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         self.n0 = n0
         self.k_T = k_T
         self.mass = mass
+        self.c_x = c_x
+        self.c_y = c_y
 
         # Define Environment
         try: 
@@ -4389,8 +4397,8 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         state_mean = [0, 0, 0, 0, 
                       0, 0, 0, 0, 
                       1.3, 0]
-        state_var = [5.0, 2.0, np.pi/4, np.pi, 
-                     2.5, 2.0, np.pi/4, np.pi, 
+        state_var = [5.0, 2.0, 0.25, 1.0, 
+                     2.5, 2.0, 0.25, 1.0,
                      1.5, 2.0]
 
         # Value mean and var 
@@ -4454,12 +4462,12 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         return [
             [-5, 5],  # x
             [-1.4, 1.4] , # v_x
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1, 1], # omega_x
             [-2, 2], # y
             [-1.4, 1.4] , # v_y
-            [-np.pi/4, np.pi/4], # theta_y
-            [-np.pi, np.pi], # omega_y
+            [-0.24, 0.24], # theta_y
+            [-1, 1], # omega_y
             [-0.2, 2.8], # z
             [-1.4, 1.4], # v_z
             ######### Parametric changes #########
@@ -4499,11 +4507,11 @@ class Quad10D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
     def open_loop_dynamics(self, state, time): 
         dsdt = torch.zeros_like(state)
         dsdt[..., 0]  = state[..., 1]
-        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) # might try self.gravity * theta_x
+        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) - self.c_x*state[..., 1]# might try self.gravity * theta_x
         dsdt[..., 2]  = -self.d1 * state[..., 2] + state[..., 3]
         dsdt[..., 3]  = -self.d0 * state[..., 2] 
         dsdt[..., 4]  = state[..., 5]
-        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6])
+        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6]) - self.c_y*state[..., 5] # might try self.gravity * theta_y
         dsdt[..., 6]  = -self.d1 * state[..., 6] + state[..., 7]
         dsdt[..., 7]  = -self.d0 * state[..., 6]
         dsdt[..., 8]  = state[..., 9]
@@ -4610,7 +4618,7 @@ class Quad10D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
                  x_vel_dist_slope: float = 0.0, y_vel_dist_slope: float = 0.0, z_vel_dist_slope: float = 0.0,
                  # NOTE: no disturbance directly on position
                  # Constants: 
-                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1, c_x: float = 0.3, c_y: float = 0.3,
                  set_mode: str='avoid', 
                  boundary_cfg_num: int = 1, problem_type: str = "avoid"):
         """
@@ -4632,6 +4640,8 @@ class Quad10D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
             - n0: float: constant
             - k_T: float: thrust multiplier
             - m: float: mass
+            - c_x: float: x axis drag coefficient
+            - c_y: float: y axis drag coefficient
             - set_mode: Set mode for the quadcopter: avoid or reach 
             - boundary_cfg_num: int: environment configuration to use 
             - problem_type: str: Type of problem to solve: see env_configs.py for details
@@ -4661,6 +4671,8 @@ class Quad10D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
         self.n0 = n0
         self.k_T = k_T
         self.mass = mass
+        self.c_x = c_x
+        self.c_y = c_y
 
         # Define Environment
         try: 
@@ -4706,8 +4718,8 @@ class Quad10D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
         state_mean = [0, 0, 0, 0, 
                       0, 0, 0, 0, 
                       1.3, 0]
-        state_var = [5.0, 2.0, np.pi/4, np.pi, 
-                     2.5, 2.0, np.pi/4, np.pi, 
+        state_var = [5.0, 2.0, 0.25, 1.0, 
+                     2.5, 2.0, 0.25, 1.0,
                      1.5, 2.0]
 
         # Value mean and var 
@@ -4758,14 +4770,14 @@ class Quad10D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
         return [
             [-5, 5],  # x
             [-1.4, 1.4] , # v_x
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1, 1], # omega_x
             [-2, 2], # y
             [-1.4, 1.4] , # v_y
-            [-np.pi/4, np.pi/4], # theta_y
-            [-np.pi, np.pi], # omega_y
+            [-0.24, 0.24], # theta_y
+            [-1, 1], # omega_y
             [-0.2, 2.8], # z
-            [-1.4, 1.4] # v_z
+            [-1.4, 1.4], # v_z
         ]
     
     # Quadcopter Dynamics
@@ -4787,11 +4799,11 @@ class Quad10D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
     def open_loop_dynamics(self, state, time): 
         dsdt = torch.zeros_like(state)
         dsdt[..., 0]  = state[..., 1]
-        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) # might try self.gravity * theta_x
+        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) - self.c_x*state[..., 1]# might try self.gravity * theta_x
         dsdt[..., 2]  = -self.d1 * state[..., 2] + state[..., 3]
         dsdt[..., 3]  = -self.d0 * state[..., 2] 
         dsdt[..., 4]  = state[..., 5]
-        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6])
+        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6]) - self.c_y*state[..., 5] # might try self.gravity * theta_y
         dsdt[..., 6]  = -self.d1 * state[..., 6] + state[..., 7]
         dsdt[..., 7]  = -self.d0 * state[..., 6]
         dsdt[..., 8]  = state[..., 9]
@@ -4887,7 +4899,7 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
                  x_vel_dist_slope: float = 0.0, y_vel_dist_slope: float = 0.0, z_vel_dist_slope: float = 0.0,
                  # NOTE: no disturbance directly on position
                  # Constants: 
-                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1,
+                 d0: float = 10, d1: float = 8, n0: float = 10, k_T: float = 0.9, mass: float = 1, c_x: float = 0.3, c_y: float = 0.3,
                  set_mode: str='avoid', 
                  boundary_cfg_num: int = 1, problem_type: str = "avoid"):
         """
@@ -4909,6 +4921,8 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
             - n0: float: constant
             - k_T: float: thrust multiplier
             - m: float: mass
+            - c_x: float: x axis drag coefficient
+            - c_y: float: y axis drag coefficient
             - set_mode: Set mode for the quadcopter: avoid or reach 
             - boundary_cfg_num: int: environment configuration to use 
             - problem_type: str: Type of problem to solve: see env_configs.py for details
@@ -4932,6 +4946,8 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
         self.n0 = n0
         self.k_T = k_T
         self.mass = mass
+        self.c_x = c_x
+        self.c_y = c_y
 
         # Define Environment
         self.env_config = env_configs.Quad10d_envs(config_num=self.boundary_cfg_num,
@@ -4971,8 +4987,8 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
         state_mean = [0, 0, 0, 0, 
                       0, 0, 0, 0, 
                       1.3, 0]
-        state_var = [5.0, 2.0, np.pi/4, np.pi, 
-                     2.5, 2.0, np.pi/4, np.pi, 
+        state_var = [5.0, 2.0, 0.25, 1.0,
+                     2.5, 2.0, 0.25, 1.0,
                      1.5, 2.0]
 
         # Value mean and var 
@@ -5037,12 +5053,12 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
         return [
             [-5, 5],  # x
             [-1.4, 1.4] , # v_x
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1, 1], # omega_x
             [-2, 2], # y
             [-1.4, 1.4] , # v_y
-            [-np.pi/4, np.pi/4], # theta_y
-            [-np.pi, np.pi], # omega_y
+            [-0.24, 0.24], # theta_y
+            [-1, 1], # omega_y
             [-0.2, 2.8], # z
             [-1.4, 1.4], # v_z
             ######### Parametric changes #########
@@ -5084,11 +5100,11 @@ class Quad10D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDyn
     def open_loop_dynamics(self, state, time): 
         dsdt = torch.zeros_like(state)
         dsdt[..., 0]  = state[..., 1]
-        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) # might try self.gravity * theta_x
+        dsdt[..., 1]  = self.gravity * torch.tan(state[..., 2]) - self.c_x*state[..., 1]# might try self.gravity * theta_x
         dsdt[..., 2]  = -self.d1 * state[..., 2] + state[..., 3]
         dsdt[..., 3]  = -self.d0 * state[..., 2] 
         dsdt[..., 4]  = state[..., 5]
-        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6])
+        dsdt[..., 5]  = self.gravity * torch.tan(state[..., 6]) - self.c_y*state[..., 5] # might try self.gravity * theta_y
         dsdt[..., 6]  = -self.d1 * state[..., 6] + state[..., 7]
         dsdt[..., 7]  = -self.d0 * state[..., 6]
         dsdt[..., 8]  = state[..., 9]
@@ -5269,8 +5285,8 @@ class Quad6DDelay_Consolidated(ControlandDisturbanceAffineDynamics):
         return [
             [-5, 5], 
             [-1.4, 1.4],
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1.0, 1.0], # omega_x
             [-0.2, 2.8],
             [-1.4, 1.4], 
         ]
@@ -5468,8 +5484,8 @@ class Quad6DDelay_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         return [
             [-5, 5], 
             [-1.4, 1.4],
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1.0, 1.0], # omega_x
             [-0.2, 2.8],
             [-1.4, 1.4], 
             ######### Parametric changes #########
@@ -5689,10 +5705,10 @@ class Quad6DDelay_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
         return [
             [-5, 5], 
             [-1.4, 1.4],
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1.0, 1.0], # omega_x
             [-0.2, 2.8],
-            [-1.4, 1.4], 
+            [-1.4, 1.4],  
         ]
 
     # Quadcopter Dynamics
@@ -5897,8 +5913,8 @@ class Quad6DDelay_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffin
         return [
             [-5, 5], 
             [-1.4, 1.4],
-            [-np.pi/4, np.pi/4], # theta_x
-            [-np.pi, np.pi], # omega_x
+            [-0.24, 0.24], # theta_x
+            [-1.0, 1.0], # omega_x
             [-0.2, 2.8],
             [-1.4, 1.4], 
             ######### Parametric changes #########
@@ -6220,7 +6236,6 @@ class Quad6D_Consolidated(ControlandDisturbanceAffineDynamics):
     def plot_config(self):
         return self.env_config.plot_config
     
-
 class Quad6D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
     def __init__(self, gravity: float, max_pitch: float, max_roll: float, min_thrust: float, max_thrust: float,
                  max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, set_mode: str='avoid', 
@@ -6445,7 +6460,6 @@ class Quad6D_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
             'z_axis_idx': ret_plot_config['z_axis_idx'],
         }
     
-
 class Quad6D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
     def __init__(self, gravity: float, max_pitch: float, max_roll: float, min_thrust: float, max_thrust: float,
                  max_x_vel_dist: float = 0.0, max_y_vel_dist: float = 0.0, max_z_vel_dist: float = 0.0, set_mode: str='avoid', 
@@ -6637,7 +6651,6 @@ class Quad6D_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
     
     def plot_config(self):
         return self.env_config.plot_config
-
 
 class Quad6D_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffineDynamics):
     def __init__(self, gravity: float, max_pitch: float, max_roll: float, min_thrust: float, max_thrust: float,
