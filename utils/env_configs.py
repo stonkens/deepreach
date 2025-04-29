@@ -533,6 +533,98 @@ class Quad10d_envs():
             raise ValueError("Invalid problem type for the Quad2DAttitude environment.")
         
 
+########################################################### Quad 6d Delay ###########################################################
+
+class Quad6DDelay_envs(): 
+    """
+    Environment Configurations for 10 d quadcopter
+    """
+
+    def __init__(self, config_num, problem_type):
+        """
+        Args: 
+            - config_num: int: configuration number for the environment 
+            - problem_type: str: problem type to generate sdfs ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
+        """
+        viable_obstacle_configs = [1]
+        viable_problem_types = ["reach", "avoid", "reach_avoid", "reach_avoid_ci"]
+
+        self.config_num = config_num 
+        self.problem_type = problem_type 
+
+        assert config_num in viable_obstacle_configs, "Invalid configuration number for the Quad10d environment."
+        assert problem_type in viable_problem_types, "Invalid problem type for the Quad10d environment."
+
+        # Sign Conventions: 
+        # SDF Avoid: Negative = Unsafe, Positive = Safe
+        # SDF Reach: Negative = Outside Reach/Unsafe, Positive = Inside Reach/Safe
+        state_slices = [0, 0, 0, 0, 0, 0]
+        state_labels = ['x', 'v_x', r'$\theta_x$', r'$\omega_x$', 'z', 'v_z']
+
+        # State: [0,  1 ,   2    ,    3   , 4,  5 ]
+        # State: [x, v_x, theta_x, omega_x, z, v_z]
+        if self.config_num == 1:
+            space_boundary = boundary_functions.Boundary([0, 1, 2, 3, 4, 5], torch.Tensor([-4.0,-1.9, -0.24, -0.95, 0.0, -1.9]),
+                                                            torch.Tensor([4.0, 1.9, 0.24, 0.95, 2.5, 1.9]))
+            # rectangle1 = boundary_functions.Rectangle([0, 1], torch.Tensor([-3.5, 0.0]), torch.Tensor([-2.9, 1.5]))
+            rectangle2 = boundary_functions.Rectangle([0, 4], torch.Tensor([-3.1, 0.0]), torch.Tensor([-1.3, 1.5]))
+            rectangle3 = boundary_functions.Rectangle([0, 4], torch.Tensor([0.0, 0.0]), torch.Tensor([1.2, 1.0]))
+            rectangle4 = boundary_functions.Rectangle([0, 4], torch.Tensor([2.0, 0.0]), torch.Tensor([3.2, 2.0]))
+            self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [rectangle2, rectangle3, rectangle4])
+            rectangle = boundary_functions.Rectangle([0, 1, 2, 3, 4, 5], torch.Tensor([-2.5, -1.0, -0.25, -1., 1.7, -1.0]), torch.Tensor([1.5, 1.0, 0.25, 1.0, 2.3, 1.0]))
+            self.sdf_reach = lambda x: -1 * rectangle.obstacle_sdf(x) # Didn't add the sqrt(4) factor here
+
+        else: 
+            raise ValueError("Invalid configuration number for the Quad10d environment.")
+        
+
+        self.plot_config = {
+            'state_slices': state_slices, 
+            'state_labels': state_labels, 
+            'x_axis_idx': 0,
+            'y_axis_idx': 4,
+            'z_axis_idx': [1, 5], # vx, vz
+        }
+        self.configure_reach_avoid_fns()
+        return 
+
+    def configure_reach_avoid_fns(self, ): 
+        """
+        Function to properly change the sign of the reach and avoid functions so that they align
+        with deepreach conventions according to the problem we want to solve
+
+        NOTE: Starting with standard convention: 
+            - Avoid: Negative = Unsafe, Positive = Safe
+            - Reach: Negative = Outside Reach/Unsafe, Positive = Inside Reach/Safe
+
+        Returns: None - function adjusts the parameters: 
+            - sdf_reach
+            - sdf_avoid
+
+        For convention reference see: https://www.notion.so/Deepreach-Standard-Conventions-1a82da3e70b280589e4bfcee23e398a4  
+        """
+        
+        if self.problem_type == "avoid": 
+            # Negative Unsafe, Positive Safe
+            self.avoid_fn = self.sdf_avoid 
+            self.reach_fn = None 
+            self.boundary_fn = self.sdf_avoid 
+        elif self.problem_type == "reach": 
+            # WRONG: Negative Outside Reach/Unsafe, Positive Inside Reach/Safe
+            # Positive Unsafe/Outside reach set, Negative Safe/Inside reach set
+            self.avoid_fn = None 
+            self.reach_fn = lambda x: -1 * self.sdf_reach(x) #lambda x: -1 * self.sdf_reach(x) 
+            self.boundary_fn = lambda x: -1 * self.sdf_reach(x)
+        elif self.problem_type == "reach_avoid" or self.problem_type == "reach_avoid_ci": 
+            # Avoid: Negative Unsafe, Positive Safe
+            self.avoid_fn = self.sdf_avoid
+            # Reach: Positive Unsafe/Outside reach set, Negative Safe/Inside reach set
+            self.reach_fn = lambda x: -1 * self.sdf_reach(x)
+            # Boundary Function: Positive Unsafe, Negative Safe
+            self.boundary_fn = lambda x: torch.maximum(self.reach_fn(x), -self.avoid_fn(x))
+        else: 
+            raise ValueError("Invalid problem type for the Quad2DAttitude environment.")
+        
 ########################################################### Quad 6d ###########################################################
 
 class Quad6d_envs(): 
