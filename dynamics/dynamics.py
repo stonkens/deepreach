@@ -5265,8 +5265,8 @@ class Quad6DDelay_Consolidated(ControlandDisturbanceAffineDynamics):
         elif self.problem_type == "reach_avoid_ci": 
             loss_type = 'brat_ci_hjivi'
 
-        state_mean = [0, 0, 0, 0, 1.3, 0]
-        state_var = [5., 2., 0.25, 1, 1.5, 2.]
+        state_mean = [0, 0, 0, 0, 1.0, 0]
+        state_var = [-4., 2., 0.25, 1, 1.1, 2.] #[5., 2., 0.25, 1, 1.5, 2.]
 
         super().__init__(
             loss_type=loss_type, set_mode=set_mode,
@@ -5283,11 +5283,11 @@ class Quad6DDelay_Consolidated(ControlandDisturbanceAffineDynamics):
 
     def state_test_range(self):
         return [
-            [-5, 5], 
+            [-4, 4], 
             [-1.4, 1.4],
             [-0.24, 0.24], # theta_x
             [-1.0, 1.0], # omega_x
-            [-0.2, 2.8],
+            [-0.05, 2.05],
             [-1.4, 1.4], 
         ]
 
@@ -5450,8 +5450,8 @@ class Quad6DDelay_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
         elif self.problem_type == "reach_avoid_ci": 
             loss_type = 'brat_ci_hjivi'
 
-        state_mean = [0, 0, 0, 0, 1.3, 0]
-        state_var = [5., 2., 0.25, 1, 1.5, 2.]
+        state_mean = [0, 0, 0, 0, 1.0, 0]
+        state_var = [-4., 2., 0.25, 1, 1.1, 2.] #[5., 2., 0.25, 1, 1.5, 2.]
     
         ######### Parametric changes #########
         self.parametric_names = ['max_x_vel_dist', 'max_z_vel_dist'] # names corresponding to parametric values in non-parametric class 
@@ -5482,11 +5482,11 @@ class Quad6DDelay_Consolidated_parametric(ControlandDisturbanceAffineDynamics):
 
     def state_test_range(self):
         return [
-            [-5, 5], 
+            [-4, 4], 
             [-1.4, 1.4],
             [-0.24, 0.24], # theta_x
             [-1.0, 1.0], # omega_x
-            [-0.2, 2.8],
+            [-0.05, 2.05],
             [-1.4, 1.4], 
             ######### Parametric changes #########
             # Only test worst case parametric values for now 
@@ -5685,8 +5685,8 @@ class Quad6DDelay_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
         elif self.problem_type == "reach_avoid_ci": 
             loss_type = 'brat_ci_hjivi'
 
-        state_mean = [0, 0, 0, 0, 1.3, 0]
-        state_var = [5., 2., 0.25, 1, 1.5, 2.]
+        state_mean = [0, 0, 0, 0, 1.0, 0]
+        state_var = [-4., 2., 0.25, 1, 1.1, 2.] #[5., 2., 0.25, 1, 1.5, 2.]
 
         super().__init__(
             loss_type=loss_type, set_mode=set_mode,
@@ -5703,12 +5703,12 @@ class Quad6DDelay_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamics):
 
     def state_test_range(self):
         return [
-            [-5, 5], 
+            [-4, 4], 
             [-1.4, 1.4],
             [-0.24, 0.24], # theta_x
             [-1.0, 1.0], # omega_x
-            [-0.2, 2.8],
-            [-1.4, 1.4],  
+            [-0.05, 2.05],
+            [-1.4, 1.4], 
         ]
 
     # Quadcopter Dynamics
@@ -5844,8 +5844,8 @@ class Quad6DDelay_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffin
         ######### TimeVarying changes #########
 
         ######### Parametric changes #########
-        state_mean = [0, 0, 0, 0, 1.3, 0]
-        state_var = [5., 2., 0.25, 1, 1.5, 2.]
+        state_mean = [0, 0, 0, 0, 1.0, 0]
+        state_var = [-4., 2., 0.25, 1, 1.1, 2.] #[5., 2., 0.25, 1, 1.5, 2.]
 
         self.parametric_names = ['x_vel_dist_slope', 'z_vel_dist_slope'] # names corresponding to parametric values in non-parametric class 
         self.parametric_dims = [6, 7] # parametric indices in the state vector
@@ -5911,11 +5911,11 @@ class Quad6DDelay_Consolidated_TimeVarying_parametric(ControlandDisturbanceAffin
 
     def state_test_range(self):
         return [
-            [-5, 5], 
+            [-4, 4], 
             [-1.4, 1.4],
             [-0.24, 0.24], # theta_x
             [-1.0, 1.0], # omega_x
-            [-0.2, 2.8],
+            [-0.05, 2.05],
             [-1.4, 1.4], 
             ######### Parametric changes #########
             # Only test worst case parametric values for now 
