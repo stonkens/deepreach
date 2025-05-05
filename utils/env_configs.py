@@ -198,6 +198,12 @@ class Quad2DAttitude_envs():
             rectangle3 = boundary_functions.Rectangle([0, 1], torch.Tensor([0.0, 0.0]), torch.Tensor([1.2, 1.0]))
             rectangle4 = boundary_functions.Rectangle([0, 1], torch.Tensor([2.0, 0.0]), torch.Tensor([3.2, 2.0]))
             self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [rectangle2, rectangle3, rectangle4])
+            
+            # NOTE: for detecting safety failure in experiment: does not include velocity bounds 
+            obstacle_space_boundary = boundary_functions.Boundary([0, 1], torch.Tensor([-4.0, 0.0]),
+                                                            torch.Tensor([4.0, 2.5]))
+            self.sdf_obstacles  = boundary_functions.build_sdf(obstacle_space_boundary, [rectangle2, rectangle3, rectangle4])
+
             rectangle = boundary_functions.Rectangle([0, 1, 2, 3], torch.Tensor([-2.5, 1.7, -1.0, -1.0]), torch.Tensor([1.5, 2.3, 1.0, 1.0]))
             self.sdf_reach = lambda x: -1 * rectangle.obstacle_sdf(x) # Didn't add the sqrt(4) factor here
         self.configure_reach_avoid_fns()
@@ -610,6 +616,11 @@ class Quad6DDelay_envs():
             rectangle3 = boundary_functions.Rectangle([0, 4], torch.Tensor([0.0 * x_scaling_factor, 0.0 * z_scaling_factor]), torch.Tensor([1.2 * x_scaling_factor, 1.0 * z_scaling_factor]))
             rectangle4 = boundary_functions.Rectangle([0, 4], torch.Tensor([2.0 * x_scaling_factor, 0.0 * z_scaling_factor]), torch.Tensor([3.2 * x_scaling_factor, 2.0 * z_scaling_factor]))
             self.sdf_avoid = boundary_functions.build_sdf(space_boundary, [rectangle2, rectangle3, rectangle4])
+
+            obstacle_space_boundary = boundary_functions.Boundary([0, 4], torch.Tensor([-4.0 * x_scaling_factor, 0.0 * z_scaling_factor]),
+                                                            torch.Tensor([4.0 * x_scaling_factor, 2.5 * z_scaling_factor]))
+            self.sdf_obstacles  = boundary_functions.build_sdf(obstacle_space_boundary, [rectangle2, rectangle3, rectangle4])
+
             rectangle = boundary_functions.Rectangle([0, 1, 2, 3, 4, 5], torch.Tensor([-2.5 * x_scaling_factor, -1.0, -0.25, -1., 1.7 * z_scaling_factor, -1.0]), torch.Tensor([1.5 * x_scaling_factor, 1.0, 0.25, 1.0, 2.3 * z_scaling_factor, 1.0]))
             self.sdf_reach = lambda x: -1 * rectangle.obstacle_sdf(x) # Didn't add the sqrt(4) factor here
         else: 
