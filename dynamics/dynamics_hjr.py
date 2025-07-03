@@ -157,6 +157,58 @@ class Quad2DAttitude_Consolidated_TimeVarying(ControlandDisturbanceAffineDynamic
 Quad2DAttitude_Consolidated_TimeVarying_parametric = Quad2DAttitude_Consolidated_TimeVarying
 Quad2DAttitude_Consolidated_TimeVarying_parametric_Velocity = Quad2DAttitude_Consolidated_TimeVarying
 
+########## Space varying dynamics ##########
+
+class Quad2DAttitude_Consolidated_SpaceVarying(ControlandDisturbanceAffineDynamics):
+    """
+    Space varying: 
+    - Changing the max pos disturbance and max vel disturbance based as a function of the state - function is user specified
+    """
+    def __init__(self, torch_dynamics, gravity: float, max_angle: float, min_thrust: float, max_thrust: float, 
+                 disturbance_function: callable=lambda state: (0.0, 0.0, 0.0, 0.0), # disturbance function that takes in state and returns (max_xpos_dist, max_ypos_dist, max_xvel_dist, max_yvel_dist)
+                 # NOTE: function must handle single and batch inputs
+                 tMin: float = 0.0, tMax: float = 1.0,
+                 boundary_cfg_num: int = 1, problem_type: str = "avoid", # these do not matter for the hjr dynamics - maybe remove ? 
+                 ):
+        self.gravity = gravity
+        
+        self.disturbance_function = disturbance_function
+
+        control_space = sets.Box(jnp.array([-max_angle, min_thrust]), jnp.array([max_angle, max_thrust]))
+        disturbance_space = sets.Box(jnp.array([-1, -1, -1, -1]), 
+                                        jnp.array([1, 1, 1, 1]))
+        super().__init__(torch_dynamics, tMin, tMax, control_space, disturbance_space)
+
+    def open_loop_dynamics(self, state, time):
+        x, y, vx, vy = state
+        return jnp.array([vx, vy, 0., -self.gravity])
+    
+    def control_jacobian(self, state, time):
+        return jnp.array([
+            [0., 0.],
+            [0., 0.],
+            [self.gravity, 0.],
+            [0., 1.],
+        ])
+    
+    def disturbance_jacobian(self, state, time):
+        space_varying_disturbance = self.disturbance_function(state)
+
+        # NOTE: Time is negative
+        dist_jacobian = jnp.array([
+            [space_varying_disturbance[0], 0, 0, 0], 
+            [0, space_varying_disturbance[1], 0, 0], 
+            [0, 0, space_varying_disturbance[2], 0], 
+            [0, 0, 0, space_varying_disturbance[3]]
+        ])
+
+        return dist_jacobian 
+
+Quad2DAttitude_Consolidated_SpaceVarying_parametric = Quad2DAttitude_Consolidated_SpaceVarying
+Quad2DAttitude_Consolidated_SpaceVarying_parametric_Velocity = Quad2DAttitude_Consolidated_SpaceVarying
+
+############ END: Space varying dynamics ##########
+
 
 class Air3D(ControlandDisturbanceAffineDynamics):
     def __init__(self, torch_dynamics, collisionR:float, evader_speed:float, pursuer_speed:float, evader_omega_max:float,
