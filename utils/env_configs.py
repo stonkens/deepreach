@@ -56,6 +56,11 @@ class Quad2DAttitude_envs():
             # Reach Config 
             circle = boundary_functions.Circle([0, 1], 0.5, torch.tensor([-3.0, 1.75]))
             self.sdf_reach = lambda x: -1 * circle.obstacle_sdf(x) #circle.obstacle_sdf
+
+            # NOTE: for detecting safety failure in experiment: does not include velocity bounds 
+            obstacle_space_boundary = boundary_functions.Boundary([0, 1], torch.Tensor([-4.0, 0.0]),
+                                                            torch.Tensor([4.0, 2.5]))
+            self.sdf_obstacles  = boundary_functions.build_sdf(obstacle_space_boundary, [circle, rectangle])
         
         elif self.config_num == 3:
             # Obstacle Config: 3

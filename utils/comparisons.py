@@ -16,7 +16,7 @@ class GroundTruthHJSolution:
     """
     Ground truth solution using Dynamic Programming, only for 5 state dimensions or less.
     """
-    def __init__(self, hj_dynamics, solve=True, num_time_steps=5):
+    def __init__(self, hj_dynamics, solve=True, num_time_steps=5, grid_resolution=None):
         self.hj_dynamics = hj_dynamics
         self.is_parametric = False 
         if hasattr(self.hj_dynamics.torch_dynamics, "parametric_dims"):
@@ -31,9 +31,15 @@ class GroundTruthHJSolution:
         if self.is_parametric:
             state_mean = state_mean[self.non_parametric_state_dims]
             state_var = state_var[self.non_parametric_state_dims]
-            self.grid_resolution = tuple([51]) * len(self.non_parametric_state_dims)
+            if grid_resolution is not None:
+                self.grid_resolution = grid_resolution
+            else: 
+                self.grid_resolution = tuple([51]) * len(self.non_parametric_state_dims)
         else: 
-            self.grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
+            if grid_resolution is not None:
+                self.grid_resolution = grid_resolution
+            else: 
+                self.grid_resolution = tuple([51]) * self.hj_dynamics.torch_dynamics.state_dim 
         
         state_mean = jnp.array(state_mean) 
         state_var = jnp.array(state_var)
